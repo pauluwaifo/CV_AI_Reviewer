@@ -1,0 +1,255 @@
+{
+  "forms": [
+    {
+      "id": "6e195d5b-7e3d-4be7-8d2e-9b66db382df2",
+      "title": "IT support",
+      "team": "IT",
+      "intro": "Bla Bla",
+      "analysisGoal": "Bla Bla",
+      "roleSetup": {
+        "title": "IT support",
+        "seniority": "Mid-lve",
+        "location": "Lagos",
+        "summary": "Success",
+        "mustHaveSkills": [
+          "Windows Support"
+        ],
+        "niceToHaveSkills": [
+          "Reporting"
+        ],
+        "interviewFocus": [
+          "Communication"
+        ]
+      },
+      "customQuestions": [
+        {
+          "id": "question-1",
+          "label": "Bla Bla",
+          "placeholder": "Type your answer here",
+          "required": true
+        }
+      ],
+      "createdAt": "2026-05-19T12:46:48.845Z",
+      "expiresAt": "2026-05-20T00:00:00.000Z",
+      "jdAttachment": null
+    }
+  ],
+  "applications": [
+    {
+      "id": "4e0cb77b-e72e-487d-b7f5-7ee5ee8650e9",
+      "formId": "6e195d5b-7e3d-4be7-8d2e-9b66db382df2",
+      "createdAt": "2026-05-19T12:48:11.052Z",
+      "applicant": {
+        "fullName": "Paul uwaifo",
+        "email": "uwaifopaul1@gmail.com",
+        "phone": "07056610132",
+        "location": "Lagos",
+        "linkedIn": "",
+        "portfolio": "",
+        "yearsExperience": "5",
+        "noticePeriod": "1 week",
+        "salaryExpectation": "200000",
+        "coverNote": "Vla Ba",
+        "customAnswers": {
+          "question-1": "Bla Bla"
+        }
+      },
+      "resumeFile": {
+        "fileName": "CV.pdf",
+        "mimeType": "application/pdf",
+        "size": 301892,
+        "inputKind": "pdf",
+        "storagePath": "uploads/91978d70-990d-49c7-a3e3-3f9e5494989a-CV.pdf"
+      },
+      "analysis": {
+        "result": {
+          "documentType": "cv",
+          "summary": "This appears to be a candidate CV prepared for hiring review. The extracted text spans 3 pages and about 893 words. The screening was steered toward bla bla bla bla success applicant submission details: years of experience: 5 location: lagos notice period: 1 week salary expectation: 200000 applicant note: vla ba bla bla: bla bla. Contact details are present, which supports recruiter follow-up. No major structural hiring issues stood out in the fallback screen.",
+          "recommendation": {
+            "decision": "Interview",
+            "summary": "The profile looks promising, but the team should use the interview to validate a few open questions.",
+            "confidence": "Medium"
+          },
+          "candidateProfile": {
+            "name": "PAUL UWAIFO",
+            "headline": "Summary",
+            "summary": "PAUL UWAIFO appears to bring 4+ years with a profile centered on summary.",
+            "fields": [
+              {
+                "label": "Experience",
+                "value": "4+ years"
+              },
+              {
+                "label": "Email",
+                "value": "uwaifopaul1@gmail.com"
+              },
+              {
+                "label": "Phone",
+                "value": "+2347056610132"
+              },
+              {
+                "label": "Profile link",
+                "value": "github.com/pauluwaifo/NextVerse"
+              }
+            ]
+          },
+          "roleMatch": {
+            "summary": "The CV only partially aligns with the hiring brief and leaves a few role requirements unproven. 0 matched, 0 partial, 2 missing.",
+            "criteria": [
+              {
+                "criterion": "Windows Support",
+                "status": "missing",
+                "evidence": "The structured role brief includes \"windows support\", but the parsed resume does not show clear evidence for it."
+              },
+              {
+                "criterion": "Reporting",
+                "status": "missing",
+                "evidence": "The structured role brief includes \"reporting\", but the parsed resume does not show clear evidence for it."
+              }
+            ]
+          },
+          "skillAssessments": [
+            {
+              "skill": "Windows Support",
+              "category": "must-have",
+              "status": "missing",
+              "score": 28,
+              "evidence": "The structured role brief includes \"windows support\", but the parsed resume does not show clear evidence for it."
+            },
+            {
+              "skill": "Reporting",
+              "category": "nice-to-have",
+              "status": "missing",
+              "score": 28,
+              "evidence": "The structured role brief includes \"reporting\", but the parsed resume does not show clear evidence for it."
+            }
+          ],
+          "riskSignals": [
+            {
+              "category": "Role fit gaps",
+              "level": "high",
+              "summary": "2 role requirements appeared missing in the parsed CV."
+            },
+            {
+              "category": "Concern 2",
+              "level": "medium",
+              "summary": "No major structural hiring issues stood out in the local CV screen."
+            }
+          ],
+          "keyHighlights": [
+            "The CV contains about 893 words across 3 pages, which is enough for a first-pass screen.",
+            "Contact details are present, which supports recruiter follow-up.",
+            "Work experience appears clearly structured in the extracted text.",
+            "A dedicated skills or tools section supports fast shortlist review.",
+            "The CV includes measurable signals such as years of experience, percentages, or outcome metrics."
+          ],
+          "redFlags": [
+            "No major structural hiring issues stood out in the local CV screen."
+          ],
+          "recommendedActions": [
+            "Validate the must-have skills directly: Windows Support.",
+            "Double-check the document against this requested focus: Bla Bla Bla Bla Success Applicant submission details: Years of experience: 5 Location: Lagos Notice period: 1 week Salary expectation: 200000 Applicant note: Vla Ba Bla Bla: Bla Bla.",
+            "Compare the candidate against the must-have role criteria before shortlisting."
+          ],
+          "evidencePoints": [
+            {
+              "title": "Measured impact",
+              "excerpt": "PAUL UWAIFO Lagos, 100001 Nigeria | +2347056610132 | uwaifopaul1@gmail.com Summary IT Support Specialist and Frontend Developer with 4+ years of experience in IT infrastructure, network administration, and modern web development.",
+              "rationale": "The CV includes quantified evidence, which increases credibility during screening.",
+              "tone": "strength"
+            },
+            {
+              "title": "Gap: Windows Support",
+              "excerpt": "No clear supporting evidence for this requirement was found in the parsed CV text.",
+              "rationale": "The structured role brief includes \"windows support\", but the parsed resume does not show clear evidence for it.",
+              "tone": "concern"
+            },
+            {
+              "title": "Detected Email",
+              "excerpt": "uwaifopaul1@gmail.com",
+              "rationale": "Structured facts help anchor the screening result in concrete resume details.",
+              "tone": "neutral"
+            },
+            {
+              "title": "Primary concern",
+              "excerpt": "No major structural hiring issues stood out in the local CV screen.",
+              "rationale": "This issue is worth validating manually before a hiring decision is made.",
+              "tone": "concern"
+            }
+          ],
+          "interviewQuestions": [
+            "Which parts of your background best match this hiring brief: Bla Bla Bla Bla Success Applicant submission details: Years of experience: 5 Location: Lagos Notice period: 1 week Salary expectation: 200000 Applicant note: Vla Ba Bla Bla: Bla Bla?",
+            "Can you walk me through your hands-on experience with windows support?",
+            "Can you walk me through your hands-on experience with reporting?",
+            "What tools, systems, or workflows do you use most confidently in day-to-day work?"
+          ],
+          "score": {
+            "value": 82,
+            "label": "Strong",
+            "rationale": "The CV scores well for shortlist consideration because it shows relevant experience, readable structure, and credible evidence of impact.",
+            "breakdown": [
+              {
+                "category": "Role fit",
+                "score": 89,
+                "note": "The CV surfaces enough role-aligned experience and skills for shortlist consideration."
+              },
+              {
+                "category": "CV clarity",
+                "score": 80,
+                "note": "Contact details, structure, and readable sections make this resume easy to screen."
+              },
+              {
+                "category": "Evidence of impact",
+                "score": 80,
+                "note": "The candidate shows measurable evidence that strengthens credibility."
+              },
+              {
+                "category": "Hiring risk",
+                "score": 78,
+                "note": "Only limited structural concerns stood out in the local screen."
+              }
+            ]
+          },
+          "extractedFacts": [
+            {
+              "label": "Email",
+              "value": "uwaifopaul1@gmail.com"
+            },
+            {
+              "label": "Phone",
+              "value": "+2347056610132"
+            },
+            {
+              "label": "Website",
+              "value": "https://github.com/pauluwaifo/NextVerse"
+            },
+            {
+              "label": "Percentage",
+              "value": "25%"
+            },
+            {
+              "label": "Professional link",
+              "value": "github.com/pauluwaifo/NextVerse"
+            },
+            {
+              "label": "Experience signal",
+              "value": "4+ years"
+            }
+          ],
+          "tone": "Confident"
+        },
+        "meta": {
+          "fileName": "CV.pdf",
+          "fileSize": 301892,
+          "pageCount": 3,
+          "extractedCharacters": 6610,
+          "chunkCount": 1,
+          "provider": "local",
+          "inputKind": "pdf",
+          "mimeType": "application/pdf"
+        },
+        "excerpt": "PAUL UWAIFO\nLagos, 100001 Nigeria | +2347056610132 | uwaifopaul1@gmail.com\nSummary\nIT Support Specialist and Frontend Developer with 4+ years of experience in IT infrastructure, network\nadministration, and modern web development. Proven expertise in React.js, Next.js, TypeScript, Node.js, and\nsystem troubleshooting. Experienced in reducing downtime, resolving technical incidents, and building\nscalable, user-focused web applications. Strong background in cloud tools, cybersecurity fundamentals, and\ndigital transformation.\nTechnical Skills\n• Frontend: HTML5, CSS3, JavaScript (ES6+), TypeScript, React.js, Next.js, Redux Toolkit,\nZustand, Tailwind CSS, Bootstrap\n• Backend: Node.js, Express.js, RESTful APIs, EJS Templating\n• Databases: MongoDB, PostgreSQL, MySQL, TypeORM, Redis (for caching and session\nmanagement)\n• Tools & DevOps: Git, GitHub, npm, Webpack, Postman, TablePlus, cPanel, DirectAdmin,\nAgile Methodologies\n• Other: Responsive Design, Cross-Browser Compatibility, Performance Optimization, AI\nIntegration (OpenAI, Anthropic), Object-Oriented Programming (OOP), WebRTC, Three.js\n• IT Infrastructure: Network Administration, System Testing, Hardware Repair, Zoho\nWorkspace, Spiceworks, Microsoft Office SuiteTools, Odoo ERP, Git, GitHub, npm, Webpack,\nPostman, TablePlus\nProfessional Experience\nAI Developer\nOpendashboard — Remote | January 2025 – December 2025\n• Built scalable bac"
+      }
+    }
+  ]
+}

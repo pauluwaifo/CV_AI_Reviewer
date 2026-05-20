@@ -1,0 +1,49 @@
+import { NextResponse } from "next/server";
+
+import { updateWorkspaceAccessKeyHash } from "@/lib/workspace-access-store";
+import { generateWorkspaceAccessKey } from "@/lib/workspace-access-key";
+import {
+  createWorkspaceUnauthorizedResponse,
+  hashWorkspaceAccessKey,
+  requireWorkspaceApiSession,
+} from "@/lib/workspace-auth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function POST(request: Request) {
+  const session = requireWorkspaceApiSession(request);
+
+  if (!session) {
+    return createWorkspaceUnauthorizedResponse();
+  }
+
+  try {
+    const payload = (await request.json().catch(() => ({}))) as Partial<{
+      action: string;
+    }>;
+
+    if (payload.action !== "reset-workspace-access-key") {
+      return NextResponse.json({ error: "Unknown security action." }, { status: 400 });
+    }
+
+    const accessKey = generateWorkspaceAccessKey();
+
+    await updateWorkspaceAccessKeyHash(
+      session.workspaceId,
+      hashWorkspaceAccessKey(accessKey)
+    );
+
+    return NextResponse.json({ accessKey });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "I couldn't reset the workspace access key right now.",
+      },
+      { status: 500 }
+    );
+  }
+}

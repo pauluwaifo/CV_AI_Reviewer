@@ -1,0 +1,336 @@
+import { NextResponse } from "next/server";
+
+import {
+  createWorkspaceUnauthorizedResponse,
+  requireWorkspaceApiSession,
+} from "@/lib/workspace-auth";
+import {
+  deleteHiringForm,
+  getHiringFormDetail,
+  getPublicHiringForm,
+  setHiringFormPublished,
+  updateHiringForm,
+} from "@/lib/hiring-funnel-store";
+import type { RoleSetup } from "@/types/document-intelligence";
+import type { HiringFormField, HiringFormFieldType, HiringFormQuestion } from "@/types/hiring-funnel";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ formId: string }> }
+) {
+  const { formId } = await params;
+  const url = new URL(request.url);
+  const isPublicView = url.searchParams.get("view") === "public";
+  const shouldExportCsv = url.searchParams.get("export") === "csv";
+
+  if (isPublicView) {
+    const publicForm = await getPublicHiringForm(formId);
+
+    if (!publicForm) {
+      return NextResponse.json({ error: "Form not found." }, { status: 404 });
+    }
+
+    if (publicForm.status === "unpublished") {
+      return NextResponse.json(
+        { error: "This form is currently unpublished." },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ form: publicForm });
+  }
+
+  const session = requireWorkspaceApiSession(request);
+
+  if (!session) {
+    return createWorkspaceUnauthorizedResponse();
+  }
+
+  const form = await getHiringFormDetail(formId, url.origin, session.workspaceId);
+
+  if (!form) {
+    return NextResponse.json({ error: "Form not found." }, { status: 404 });
+  }
+
+  if (shouldExportCsv) {
+    const csv = buildFormResponsesCsv(form, url.origin);
+    return new NextResponse(csv, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": buildAttachmentDisposition(`${form.title || "responses"}.csv`),
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  return NextResponse.json({ form });
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ formId: string }> }
+) {
+  const { formId } = await params;
+  const session = requireWorkspaceApiSession(request);
+
+  if (!session) {
+    return createWorkspaceUnauthorizedResponse();
+  }
+
+  try {
+    const formData = await request.formData();
+    const action = String(formData.get("action") || "").trim();
+
+    if (action === "set-published") {
+      const published = String(formData.get("published") || "") === "true";
+      const form = await setHiringFormPublished({
+        formId,
+        workspaceId: session.workspaceId,
+        published,
+      });
+
+      if (!form) {
+        return NextResponse.json({ error: "Form not found." }, { status: 404 });
+      }
+
+      return NextResponse.json({ form });
+    }
+
+    const title = String(formData.get("title") || "").trim();
+
+    if (!title) {
+      return NextResponse.json({ error: "Add a form title first." }, { status: 400 });
+    }
+
+    const form = await updateHiringForm({
+      formId,
+      workspaceId: session.workspaceId,
+      title,
+      team: String(formData.get("team") || "").trim(),
+      intro: String(formData.get("intro") || "").trim(),
+      analysisGoal: String(formData.get("analysisGoal") || "").trim(),
+      roleSetup: parseRoleSetup(formData.get("roleSetup")),
+      customQuestions: parseCustomQuestions(formData.get("customQuestions")),
+      formFields: parseFormFields(formData.get("formFields")),
+      expiresAt: parseExpiresAt(formData.get("expiresAt")),
+    });
+
+    if (!form) {
+      return NextResponse.json({ error: "Form not found." }, { status: 404 });
+    }
+
+    return NextResponse.json({ form });
+  } catch {
+    return NextResponse.json(
+      { error: "I couldn't update that form right now." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ formId: string }> }
+) {
+  const { formId } = await params;
+  const session = requireWorkspaceApiSession(request);
+
+  if (!session) {
+    return createWorkspaceUnauthorizedResponse();
+  }
+
+  const deleted = await deleteHiringForm(formId, session.workspaceId);
+
+  if (!deleted) {
+    return NextResponse.json({ error: "Form not found." }, { status: 404 });
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
+function buildFormResponsesCsv(form: NonNullable<Awaited<ReturnType<typeof getHiringFormDetail>>>, origin: string) {
+  const questionColumns = form.customQuestions.map((question) => question.label);
+  const headers = [
+    "submitted_at",
+    "candidate_name",
+    "email",
+    "phone",
+    "location",
+    "linkedin",
+    "portfolio",
+    "years_experience",
+    "notice_period",
+    "salary_expectation",
+    "cover_note",
+    "decision",
+    "confidence",
+    "score",
+    "summary",
+    "resume_file",
+    "resume_download_url",
+    "source_kind",
+    ...questionColumns,
+  ];
+
+  const rows = form.applications.map((application) => {
+    const answerColumns = form.customQuestions.map(
+      (question) => application.applicant.customAnswers[question.id] || ""
+    );
+
+    return [
+      new Date(application.createdAt).toLocaleString(),
+      application.applicant.fullName,
+      application.applicant.email,
+      application.applicant.phone,
+      application.applicant.location,
+      application.applicant.linkedIn,
+      application.applicant.portfolio,
+      application.applicant.yearsExperience,
+      application.applicant.noticePeriod,
+      application.applicant.salaryExpectation,
+      application.applicant.coverNote,
+      application.analysis.result.recommendation.decision,
+      application.analysis.result.recommendation.confidence,
+      String(application.analysis.result.score.value),
+      application.analysis.result.summary,
+      application.resumeFile.fileName,
+      `${origin}/api/applications/${application.id}`,
+      application.analysis.meta.inputKind,
+      ...answerColumns,
+    ];
+  });
+
+  return [headers, ...rows].map((row) => row.map(escapeCsvCell).join(",")).join("\n");
+}
+
+function escapeCsvCell(value: string) {
+  const normalized = value.replace(/\r?\n/g, " ").trim();
+  const escaped = normalized.replace(/"/g, "\"\"");
+  return `"${escaped}"`;
+}
+
+function buildAttachmentDisposition(fileName: string) {
+  const sanitized = fileName.replace(/["\r\n]/g, "_");
+  const encoded = encodeURIComponent(fileName);
+
+  return `attachment; filename="${sanitized}"; filename*=UTF-8''${encoded}`;
+}
+
+function parseFormFields(value: FormDataEntryValue | null): HiringFormField[] {
+  if (typeof value !== "string" || !value.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((item, index): HiringFormField | null => {
+        const field = item as Partial<HiringFormField>;
+        const label = typeof field.label === "string" ? field.label.trim() : "";
+
+        if (!label) {
+          return null;
+        }
+
+        return {
+          id:
+            typeof field.id === "string" && field.id.trim()
+              ? field.id.trim()
+              : `field-${index + 1}`,
+          label,
+          placeholder: typeof field.placeholder === "string" ? field.placeholder.trim() : "",
+          helper: typeof field.helper === "string" ? field.helper.trim() : "",
+          required: field.required !== false,
+          type: parseFormFieldType(field.type),
+          options: Array.isArray(field.options)
+            ? field.options
+                .map((option) => (typeof option === "string" ? option.trim() : ""))
+                .filter(Boolean)
+            : [],
+          ...(field.systemKey ? { systemKey: field.systemKey } : {}),
+        };
+      })
+      .filter((item): item is HiringFormField => item !== null);
+  } catch {
+    return [];
+  }
+}
+
+function parseFormFieldType(value: unknown): HiringFormFieldType {
+  const allowed = [
+    "short_text",
+    "long_text",
+    "email",
+    "phone",
+    "url",
+    "number",
+    "date",
+    "multiple_choice",
+    "checkboxes",
+    "dropdown",
+    "file",
+  ];
+
+  return allowed.includes(String(value))
+    ? (value as HiringFormFieldType)
+    : "short_text";
+}
+
+function parseCustomQuestions(value: FormDataEntryValue | null): HiringFormQuestion[] {
+  if (typeof value !== "string" || !value.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as HiringFormQuestion[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseRoleSetup(value: FormDataEntryValue | null): RoleSetup {
+  if (typeof value !== "string" || !value.trim()) {
+    return {
+      title: "",
+      seniority: "",
+      location: "",
+      summary: "",
+      mustHaveSkills: [],
+      niceToHaveSkills: [],
+      interviewFocus: [],
+    };
+  }
+
+  try {
+    return JSON.parse(value) as RoleSetup;
+  } catch {
+    return {
+      title: "",
+      seniority: "",
+      location: "",
+      summary: "",
+      mustHaveSkills: [],
+      niceToHaveSkills: [],
+      interviewFocus: [],
+    };
+  }
+}
+
+function parseExpiresAt(value: FormDataEntryValue | null) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const date = new Date(`${value}T23:59:59.999`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
