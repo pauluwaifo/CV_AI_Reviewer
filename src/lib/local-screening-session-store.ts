@@ -129,6 +129,21 @@ export async function readLocalScreeningSessionStoreForMigration() {
   return readStore();
 }
 
+export async function deleteLocalWorkspaceScreeningSessions(workspaceId: string) {
+  const store = await readStore();
+  const scopedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+  const nextSessions = store.sessions.filter(
+    (session) => session.workspaceId !== scopedWorkspaceId
+  );
+
+  if (nextSessions.length === store.sessions.length) {
+    return false;
+  }
+
+  await writeStore({ sessions: nextSessions });
+  return true;
+}
+
 async function readStore() {
   await ensureStoreReady();
 

@@ -4,6 +4,7 @@ import type { QueryResultRow } from "pg";
 
 import {
   createLocalWorkspaceSessionRecord,
+  deleteLocalWorkspaceSessions,
   deleteLocalWorkspaceSessionRecordByTokenHash,
   getLocalWorkspaceSessionRecordByTokenHash,
 } from "@/lib/local-workspace-session-store";
@@ -91,6 +92,23 @@ export async function deleteWorkspaceSessionRecordByTokenHash(tokenHash: string)
       RETURNING token_hash
     `,
     [tokenHash]
+  );
+
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function deleteWorkspaceSessionRecordsByWorkspaceId(workspaceId: string) {
+  if (!isPostgresConfigured()) {
+    return deleteLocalWorkspaceSessions(workspaceId);
+  }
+
+  const result = await queryPostgres<{ token_hash: string }>(
+    `
+      DELETE FROM workspace_sessions
+      WHERE workspace_id = $1
+      RETURNING token_hash
+    `,
+    [sanitizeWorkspaceId(workspaceId)]
   );
 
   return (result.rowCount ?? 0) > 0;

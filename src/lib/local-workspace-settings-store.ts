@@ -94,6 +94,21 @@ export async function readLocalWorkspaceSettingsStoreForMigration() {
   return readStore();
 }
 
+export async function deleteLocalWorkspaceSettings(workspaceId: string) {
+  const store = await readStore();
+  const normalizedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+  const nextWorkspaces = store.workspaces.filter(
+    (item) => item.workspaceId !== normalizedWorkspaceId
+  );
+
+  if (nextWorkspaces.length === store.workspaces.length) {
+    return false;
+  }
+
+  await writeStore({ workspaces: nextWorkspaces });
+  return true;
+}
+
 async function readStore() {
   await ensureStoreReady();
 

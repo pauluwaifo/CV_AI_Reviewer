@@ -92,6 +92,21 @@ export async function readLocalWorkspaceAccessResetRequestStoreForMigration() {
   return readStore();
 }
 
+export async function deleteLocalWorkspaceAccessResetRequests(workspaceId: string) {
+  const store = await readStore();
+  const normalizedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+  const nextRequests = store.requests.filter(
+    (item) => item.workspaceId !== normalizedWorkspaceId
+  );
+
+  if (nextRequests.length === store.requests.length) {
+    return false;
+  }
+
+  await writeStore({ requests: nextRequests });
+  return true;
+}
+
 async function readStore() {
   await ensureStoreReady();
 

@@ -57,6 +57,21 @@ export async function deleteLocalWorkspaceSessionRecordByTokenHash(tokenHash: st
   return true;
 }
 
+export async function deleteLocalWorkspaceSessions(workspaceId: string) {
+  const store = await readStore();
+  const normalizedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+  const nextSessions = store.sessions.filter(
+    (item) => item.workspaceId !== normalizedWorkspaceId
+  );
+
+  if (nextSessions.length === store.sessions.length) {
+    return false;
+  }
+
+  await writeStore({ sessions: nextSessions });
+  return true;
+}
+
 async function readStore() {
   await ensureStoreReady();
 

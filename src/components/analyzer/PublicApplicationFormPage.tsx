@@ -124,7 +124,7 @@ export default function PublicApplicationFormPage({
     return (
       <PageShell theme={theme}>
         <section
-          className="mx-auto max-w-4xl overflow-hidden rounded-2xl bg-white"
+          className="mx-auto max-w-4xl overflow-hidden rounded bg-white"
           style={{ border: `1px solid ${theme.border}`, boxShadow: theme.shadowLg }}
         >
           {workspace.formHeaderImageDataUrl ? (
@@ -171,7 +171,7 @@ export default function PublicApplicationFormPage({
       <PageShell theme={theme}>
         <div className="mx-auto max-w-4xl space-y-5">
           <section
-            className="overflow-hidden rounded-2xl bg-white"
+            className="overflow-hidden rounded bg-white"
             style={{ border: `1px solid ${theme.border}`, boxShadow: theme.shadowLg }}
           >
             {workspace.formHeaderImageDataUrl ? (
@@ -226,7 +226,7 @@ export default function PublicApplicationFormPage({
                   setSuccess(null);
                   setError(null);
                 }}
-                className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-medium text-white transition"
+                className="inline-flex items-center justify-center rounded px-5 py-3 text-sm font-medium text-white transition"
                 style={{ backgroundColor: theme.accent }}
               >
                 Submit another response
@@ -245,7 +245,7 @@ export default function PublicApplicationFormPage({
     <PageShell theme={theme}>
       <div className="mx-auto max-w-4xl space-y-5">
         <section
-          className="overflow-hidden rounded-2xl bg-white"
+          className="overflow-hidden rounded bg-white"
           style={{ border: `1px solid ${theme.border}`, boxShadow: theme.shadowLg }}
         >
           {workspace.formHeaderImageDataUrl ? (
@@ -300,7 +300,7 @@ export default function PublicApplicationFormPage({
             </div>
 
             <div
-              className="rounded-2xl px-4 py-4"
+              className="rounded px-4 py-4"
               style={{ backgroundColor: theme.surface, border: `1px solid ${theme.borderSoft}` }}
             >
               <p className="font-medium" style={{ color: theme.title }}>
@@ -357,7 +357,7 @@ export default function PublicApplicationFormPage({
           ))}
 
           <section
-            className="rounded-2xl bg-white p-5 sm:p-6"
+            className="rounded bg-white p-5 sm:p-6"
             style={{ border: `1px solid ${theme.border}`, boxShadow: theme.shadowSm }}
           >
             <label className="flex items-start gap-3">
@@ -386,7 +386,7 @@ export default function PublicApplicationFormPage({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="inline-flex w-full items-center justify-center rounded-xl px-6 py-3 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              className="inline-flex w-full items-center justify-center rounded px-6 py-3 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               style={{ backgroundColor: theme.accent }}
             >
               {isSubmitting ? "Submitting..." : "Submit application"}
@@ -427,7 +427,7 @@ function SectionCard({
 }) {
   return (
     <section
-      className="rounded-2xl bg-white p-5 sm:p-6"
+      className="rounded bg-white p-5 sm:p-6"
       style={{ border: `1px solid ${theme.border}`, boxShadow: theme.shadowSm }}
     >
       <p className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: theme.accent }}>
@@ -453,7 +453,7 @@ function QuestionCard({
 }) {
   return (
     <section
-      className="rounded-2xl bg-white p-5 sm:p-6"
+      className="rounded bg-white p-5 sm:p-6"
       style={{ border: `1px solid ${theme.border}`, boxShadow: theme.shadowSm }}
     >
       <div className="space-y-3">
@@ -627,7 +627,7 @@ function AlertPanel({
 }) {
   return (
     <div
-      className="mx-auto max-w-3xl rounded-2xl bg-white p-6 text-sm"
+      className="mx-auto max-w-3xl rounded bg-white p-6 text-sm"
       style={{ border: `1px solid ${theme.border}`, color: theme.body, boxShadow: theme.shadowMd }}
     >
       {children}
@@ -644,7 +644,7 @@ function DangerPanel({
 }) {
   return (
     <div
-      className="rounded-2xl px-4 py-3 text-sm"
+      className="rounded px-4 py-3 text-sm"
       style={{
         border: `1px solid ${theme.dangerBorder}`,
         backgroundColor: theme.dangerBg,
@@ -686,7 +686,7 @@ function buildFileInputStyle(theme: ReturnType<typeof buildPublicFormTheme>) {
 }
 
 const inputClassName =
-  "w-full rounded-xl border bg-white px-4 py-3 text-sm outline-hidden transition placeholder:text-gray-400 focus:ring-4";
+  "w-full rounded border bg-white px-4 py-3 text-sm outline-hidden transition placeholder:text-gray-400 focus:ring-4";
 
 const fileInputClassName =
-  "w-full rounded-xl border bg-white px-4 py-3 text-sm outline-hidden transition file:mr-4 file:rounded-lg file:border-0 file:px-4 file:py-2 file:text-sm file:font-medium";
+  "w-full rounded border bg-white px-4 py-3 text-sm outline-hidden transition file:mr-4 file:rounded file:border-0 file:px-4 file:py-2 file:text-sm file:font-medium";

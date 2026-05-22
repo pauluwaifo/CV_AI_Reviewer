@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     const payload = (await request.json().catch(() => ({}))) as Partial<{
       adminPassword: string;
       action: string;
+      accessKey: string;
       requestId: string;
       workspaceId: string;
     }>;
@@ -34,6 +35,8 @@ export async function POST(request: Request) {
     const action = typeof payload.action === "string" ? payload.action : "";
     const adminPassword =
       typeof payload.adminPassword === "string" ? payload.adminPassword.trim() : "";
+    const nextAccessKey =
+      typeof payload.accessKey === "string" ? payload.accessKey.trim() : "";
 
     if (action !== "reject") {
       if (!adminPassword) {
@@ -52,16 +55,25 @@ export async function POST(request: Request) {
     }
 
     if (action === "reset-workspace") {
-      const workspaceId = sanitizeWorkspaceId(payload.workspaceId ?? "");
+      const requestedWorkspaceId =
+        typeof payload.workspaceId === "string" ? payload.workspaceId.trim() : "";
+      const workspaceId = sanitizeWorkspaceId(requestedWorkspaceId);
 
-      if (!workspaceId) {
+      if (!requestedWorkspaceId) {
         return NextResponse.json(
           { error: "Choose a company workspace first." },
           { status: 400 }
         );
       }
 
-      const accessKey = generateWorkspaceAccessKey();
+      const accessKey = nextAccessKey || generateWorkspaceAccessKey();
+
+      if (accessKey.length < 8) {
+        return NextResponse.json(
+          { error: "Use an access key with at least 8 characters." },
+          { status: 400 }
+        );
+      }
 
       await updateWorkspaceAccessKeyHash(workspaceId, hashWorkspaceAccessKey(accessKey));
 
@@ -103,7 +115,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unknown reset action." }, { status: 400 });
     }
 
-    const accessKey = generateWorkspaceAccessKey();
+    const accessKey = nextAccessKey || generateWorkspaceAccessKey();
+
+    if (accessKey.length < 8) {
+      return NextResponse.json(
+        { error: "Use an access key with at least 8 characters." },
+        { status: 400 }
+      );
+    }
 
     await updateWorkspaceAccessKeyHash(
       resetRequest.workspaceId,

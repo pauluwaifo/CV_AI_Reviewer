@@ -390,6 +390,32 @@ export async function readLocalHiringFunnelStoreForMigration() {
   return readStore();
 }
 
+export async function deleteLocalWorkspaceHiringData(workspaceId: string) {
+  const store = await readStore();
+  const scopedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+  const relatedApplications = store.applications.filter(
+    (item) => item.workspaceId === scopedWorkspaceId
+  );
+  const hasWorkspaceData =
+    relatedApplications.length > 0 ||
+    store.forms.some((item) => item.workspaceId === scopedWorkspaceId);
+
+  if (!hasWorkspaceData) {
+    return false;
+  }
+
+  for (const application of relatedApplications) {
+    await removeStoredFile(application.resumeFile.storagePath);
+  }
+
+  store.forms = store.forms.filter((item) => item.workspaceId !== scopedWorkspaceId);
+  store.applications = store.applications.filter(
+    (item) => item.workspaceId !== scopedWorkspaceId
+  );
+  await writeStore(store);
+  return true;
+}
+
 export async function readLocalUploadedBinaryByStoragePath(storagePath: string) {
   const absolutePath = resolveStoredFilePath(storagePath);
 

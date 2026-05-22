@@ -2,6 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   buildDefaultWorkspaceSettings,
@@ -22,16 +23,20 @@ type WorkspaceMember = {
 };
 
 export default function WorkspaceSettingsPage() {
+  const router = useRouter();
   const { settings, replaceSettings } = useWorkspace();
   const [draft, setDraft] = useState(settings);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
   const [inviteAccessKey, setInviteAccessKey] = useState("");
+  const [newWorkspaceAccessKey, setNewWorkspaceAccessKey] = useState("");
   const [resetAccessKey, setResetAccessKey] = useState("");
+  const [deleteWorkspaceConfirmation, setDeleteWorkspaceConfirmation] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
   const [isResettingKey, setIsResettingKey] = useState(false);
+  const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
   const [updatingMemberId, setUpdatingMemberId] = useState("");
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
@@ -305,6 +310,16 @@ export default function WorkspaceSettingsPage() {
       return;
     }
 
+    const accessKey = newWorkspaceAccessKey.trim();
+
+    if (!accessKey) {
+      setFeedback({
+        tone: "error",
+        message: "Enter the new shared access key first, or use Generate automatically.",
+      });
+      return;
+    }
+
     setIsResettingKey(true);
     setResetAccessKey("");
     setFeedback(null);
@@ -315,7 +330,10 @@ export default function WorkspaceSettingsPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ action: "reset-workspace-access-key" }),
+        body: JSON.stringify({
+          action: "reset-workspace-access-key",
+          accessKey,
+        }),
       });
       const payload = (await response.json().catch(() => null)) as
         | { accessKey?: string; error?: string }
@@ -326,10 +344,10 @@ export default function WorkspaceSettingsPage() {
       }
 
       setResetAccessKey(payload.accessKey);
+      setNewWorkspaceAccessKey(payload.accessKey);
       setFeedback({
         tone: "success",
-        message:
-          "Workspace access key reset. Save the new key now because it will only be shown once.",
+        message: "Workspace access key updated. Save the new key now because it will only be shown once.",
       });
     } catch (resetError) {
       setFeedback({
@@ -341,6 +359,66 @@ export default function WorkspaceSettingsPage() {
       });
     } finally {
       setIsResettingKey(false);
+    }
+  }
+
+  function handleGenerateWorkspaceAccessKey() {
+    const suggestedAccessKey = createSuggestedWorkspaceAccessKey();
+    setNewWorkspaceAccessKey(suggestedAccessKey);
+    setResetAccessKey("");
+    setFeedback({
+      tone: "success",
+      message: "Suggested shared access key generated. Review it, then save it for this workspace.",
+    });
+  }
+
+  async function handleDeleteWorkspace() {
+    if (isDeletingWorkspace) {
+      return;
+    }
+
+    const confirmWorkspaceId = deleteWorkspaceConfirmation.trim();
+
+    if (confirmWorkspaceId !== draft.workspaceId) {
+      setFeedback({
+        tone: "error",
+        message: "Type the exact workspace ID before deleting this workspace.",
+      });
+      return;
+    }
+
+    setIsDeletingWorkspace(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/workspace", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ confirmWorkspaceId }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error || "I couldn't delete that workspace.");
+      }
+
+      await fetch("/api/auth/signout", { method: "POST" }).catch(() => undefined);
+      router.replace("/signup");
+      router.refresh();
+    } catch (deleteError) {
+      setFeedback({
+        tone: "error",
+        message:
+          deleteError instanceof Error
+            ? deleteError.message
+            : "I couldn't delete that workspace.",
+      });
+    } finally {
+      setIsDeletingWorkspace(false);
     }
   }
 
@@ -695,20 +773,43 @@ export default function WorkspaceSettingsPage() {
 
           <div className="rounded-lg border border-error-200 bg-error-50 p-5 dark:border-error-500/20 dark:bg-error-500/10">
             <p className="text-sm font-semibold text-error-700 dark:text-error-200">
-              Reset workspace access key
+              Set a new shared workspace key
             </p>
             <p className="mt-2 text-sm leading-6 text-error-700/80 dark:text-error-100">
-              This replaces the original shared workspace key. Anyone using the old shared key will
-              need the new one.
+              Enter the next shared key yourself when you want a controlled reset. Anyone using the
+              old shared key will need the new one.
             </p>
-            <button
-              type="button"
-              onClick={() => void handleResetWorkspaceAccessKey()}
-              disabled={isResettingKey}
-              className="mt-4 inline-flex rounded-lg bg-error-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-error-700 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isResettingKey ? "Resetting..." : "Reset shared key"}
-            </button>
+            <div className="mt-4 space-y-3">
+              <Field
+                label="New shared access key"
+                help="Use at least 8 characters. This is the company-wide sign-in key for shared access."
+              >
+                <input
+                  value={newWorkspaceAccessKey}
+                  onChange={(event) => setNewWorkspaceAccessKey(event.target.value)}
+                  className="w-full rounded-lg border border-error-200 bg-white px-4 py-3 text-sm text-gray-800 outline-hidden transition placeholder:text-gray-400 focus:border-error-300 focus:ring-4 focus:ring-error-500/10 dark:border-error-500/30 dark:bg-gray-950 dark:text-white/90 dark:placeholder:text-gray-500"
+                  placeholder="Enter the new shared access key"
+                />
+              </Field>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => void handleResetWorkspaceAccessKey()}
+                  disabled={isResettingKey || !newWorkspaceAccessKey.trim()}
+                  className="inline-flex items-center justify-center rounded-lg bg-error-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-error-700 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isResettingKey ? "Saving new key..." : "Set new shared key"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGenerateWorkspaceAccessKey}
+                  disabled={isResettingKey}
+                  className="inline-flex items-center justify-center rounded-lg border border-error-300 px-4 py-2 text-sm font-medium text-error-700 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-error-500/30 dark:text-error-200 dark:hover:bg-error-500/10"
+                >
+                  Generate automatically
+                </button>
+              </div>
+            </div>
           </div>
 
           {resetAccessKey ? (
@@ -718,6 +819,40 @@ export default function WorkspaceSettingsPage() {
               note="Save this now. For safety, it will not be shown again after you leave this page."
             />
           ) : null}
+
+          <div className="rounded-lg border border-error-200 bg-error-50 p-5 dark:border-error-500/20 dark:bg-error-500/10">
+            <p className="text-sm font-semibold text-error-700 dark:text-error-200">
+              Delete this workspace
+            </p>
+            <p className="mt-2 text-sm leading-6 text-error-700/80 dark:text-error-100">
+              This permanently removes this company workspace, including forms, applications,
+              uploaded files, member access, and workspace sessions.
+            </p>
+            <div className="mt-4 space-y-3">
+              <Field
+                label="Confirm workspace ID"
+                help={`Type ${draft.workspaceId} exactly before deleting this workspace.`}
+              >
+                <input
+                  value={deleteWorkspaceConfirmation}
+                  onChange={(event) => setDeleteWorkspaceConfirmation(event.target.value)}
+                  className="w-full rounded-lg border border-error-200 bg-white px-4 py-3 text-sm text-gray-800 outline-hidden transition placeholder:text-gray-400 focus:border-error-300 focus:ring-4 focus:ring-error-500/10 dark:border-error-500/30 dark:bg-gray-950 dark:text-white/90 dark:placeholder:text-gray-500"
+                  placeholder={draft.workspaceId}
+                />
+              </Field>
+              <button
+                type="button"
+                onClick={() => void handleDeleteWorkspace()}
+                disabled={
+                  isDeletingWorkspace ||
+                  deleteWorkspaceConfirmation.trim() !== draft.workspaceId
+                }
+                className="inline-flex items-center justify-center rounded-lg bg-error-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-error-800 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isDeletingWorkspace ? "Deleting workspace..." : "Delete workspace"}
+              </button>
+            </div>
+          </div>
         </article>
       </section>
 
@@ -1023,6 +1158,16 @@ function PreviewCard({
 
 const inputClassName =
   "w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800 outline-hidden transition placeholder:text-gray-400 focus:border-brand-300 focus:ring-4 focus:ring-brand-500/10 dark:border-gray-800 dark:bg-gray-950 dark:text-white/90 dark:placeholder:text-gray-500";
+
+function createSuggestedWorkspaceAccessKey() {
+  if (typeof globalThis.crypto !== "undefined") {
+    const bytes = new Uint8Array(8);
+    globalThis.crypto.getRandomValues(bytes);
+    return `workspace_${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  return `workspace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {

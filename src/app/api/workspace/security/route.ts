@@ -27,13 +27,23 @@ export async function POST(request: Request) {
   try {
     const payload = (await request.json().catch(() => ({}))) as Partial<{
       action: string;
+      accessKey: string;
     }>;
+    const nextAccessKey =
+      typeof payload.accessKey === "string" ? payload.accessKey.trim() : "";
 
     if (payload.action !== "reset-workspace-access-key") {
       return NextResponse.json({ error: "Unknown security action." }, { status: 400 });
     }
 
-    const accessKey = generateWorkspaceAccessKey();
+    const accessKey = nextAccessKey || generateWorkspaceAccessKey();
+
+    if (accessKey.length < 8) {
+      return NextResponse.json(
+        { error: "Use an access key with at least 8 characters." },
+        { status: 400 }
+      );
+    }
 
     await updateWorkspaceAccessKeyHash(
       session.workspaceId,
