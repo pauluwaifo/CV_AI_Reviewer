@@ -1,5 +1,7 @@
 import "server-only";
 
+import { getWorkspaceMailConnection } from "@/lib/workspace-mail-store";
+
 type SendMailInput = {
   to: string;
   subject: string;
@@ -8,13 +10,27 @@ type SendMailInput = {
 };
 
 export type MailDeliveryResult =
-  | { status: "sent"; provider: "gmail"; messageId: string }
-  | { status: "skipped"; reason: string };
+  | {
+      status: "sent";
+      provider: "gmail";
+      source: "workspace" | "global";
+      fromEmail: string;
+      messageId: string;
+    }
+  | { status: "skipped"; reason: string; source: "workspace" | "global" | "none" };
+
+export type WorkspaceMailConnectionSummary = {
+  provider: "gmail";
+  source: "workspace" | "global" | "none";
+  fromEmail: string;
+  hasWorkspaceConnection: boolean;
+  updatedAt: string | null;
+};
 
 const gmailTokenUrl = "https://oauth2.googleapis.com/token";
 const gmailSendUrl = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
 
-export function isMailConfigured() {
+export function isGlobalMailConfigured() {
   return Boolean(
     process.env.GOOGLE_MAIL_CLIENT_ID?.trim() &&
       process.env.GOOGLE_MAIL_CLIENT_SECRET?.trim() &&
@@ -23,19 +39,61 @@ export function isMailConfigured() {
   );
 }
 
-export async function sendMail(input: SendMailInput): Promise<MailDeliveryResult> {
-  if (!isMailConfigured()) {
+export async function getWorkspaceMailConnectionSummary(
+  workspaceId: string
+): Promise<WorkspaceMailConnectionSummary> {
+  const workspaceConfig = await getWorkspaceMailConnection(workspaceId);
+
+  if (workspaceConfig) {
     return {
-      status: "skipped",
-      reason:
-        "Google mail env values are not configured, so no email was sent.",
+      provider: "gmail",
+      source: "workspace",
+      fromEmail: workspaceConfig.fromEmail,
+      hasWorkspaceConnection: true,
+      updatedAt: workspaceConfig.updatedAt,
     };
   }
 
-  const accessToken = await getGoogleAccessToken();
+  if (isGlobalMailConfigured()) {
+    return {
+      provider: "gmail",
+      source: "global",
+      fromEmail: process.env.GOOGLE_MAIL_FROM?.trim().toLowerCase() ?? "",
+      hasWorkspaceConnection: false,
+      updatedAt: null,
+    };
+  }
+
+  return {
+    provider: "gmail",
+    source: "none",
+    fromEmail: "",
+    hasWorkspaceConnection: false,
+    updatedAt: null,
+  };
+}
+
+export async function sendWorkspaceMail({
+  workspaceId,
+  ...input
+}: SendMailInput & {
+  workspaceId: string;
+}): Promise<MailDeliveryResult> {
+  const config = await resolveMailConfig(workspaceId);
+
+  if (!config) {
+    return {
+      status: "skipped",
+      source: "none",
+      reason:
+        "No workspace sender or global Google mail fallback is configured, so no email was sent.",
+    };
+  }
+
+  const accessToken = await getGoogleAccessToken(config);
   const raw = encodeGmailMessage({
     ...input,
-    from: process.env.GOOGLE_MAIL_FROM?.trim() ?? "",
+    from: config.fromEmail,
   });
 
   const response = await fetch(gmailSendUrl, {
@@ -59,6 +117,8 @@ export async function sendMail(input: SendMailInput): Promise<MailDeliveryResult
   return {
     status: "sent",
     provider: "gmail",
+    source: config.source,
+    fromEmail: config.fromEmail,
     messageId: payload?.id || "",
   };
 }
@@ -106,6 +166,54 @@ export function buildWorkspaceInviteEmail({
   return { subject, text, html };
 }
 
+export function buildWorkspaceVerificationCodeEmail({
+  appName,
+  organizationName,
+  verificationCode,
+  expiresInMinutes,
+}: {
+  appName: string;
+  organizationName: string;
+  verificationCode: string;
+  expiresInMinutes: number;
+}) {
+  const subject = `Verify your ${appName} workspace email`;
+  const intro = `Use this code to finish creating ${organizationName}'s workspace on ${appName}.`;
+
+  return buildOneTimeCodeEmail({
+    subject,
+    heading: `Verify ${organizationName}`,
+    intro,
+    verificationCode,
+    expiresInMinutes,
+    footer: "Only enter this code on the workspace verification screen.",
+  });
+}
+
+export function buildWorkspaceSignInCodeEmail({
+  appName,
+  organizationName,
+  verificationCode,
+  expiresInMinutes,
+}: {
+  appName: string;
+  organizationName: string;
+  verificationCode: string;
+  expiresInMinutes: number;
+}) {
+  const subject = `${appName} sign-in code`;
+  const intro = `Use this code to complete secure sign-in for ${organizationName}.`;
+
+  return buildOneTimeCodeEmail({
+    subject,
+    heading: `Sign in to ${organizationName}`,
+    intro,
+    verificationCode,
+    expiresInMinutes,
+    footer: "If you did not request this sign-in code, ignore this email.",
+  });
+}
+
 function getBase64Url(value: string) {
   return Buffer.from(value)
     .toString("base64")
@@ -114,16 +222,87 @@ function getBase64Url(value: string) {
     .replace(/=+$/g, "");
 }
 
-async function getGoogleAccessToken() {
+function buildOneTimeCodeEmail({
+  subject,
+  heading,
+  intro,
+  verificationCode,
+  expiresInMinutes,
+  footer,
+}: {
+  subject: string;
+  heading: string;
+  intro: string;
+  verificationCode: string;
+  expiresInMinutes: number;
+  footer: string;
+}) {
+  const text = [
+    heading,
+    "",
+    intro,
+    "",
+    `Verification code: ${verificationCode}`,
+    `Expires in: ${expiresInMinutes} minutes`,
+    "",
+    footer,
+  ].join("\n");
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+      <h2 style="margin:0 0 12px">${escapeHtml(heading)}</h2>
+      <p>${escapeHtml(intro)}</p>
+      <div style="border:1px solid #d1d5db;border-radius:14px;padding:18px;margin:18px 0;background:#f9fafb;text-align:center">
+        <p style="margin:0 0 8px;font-size:12px;letter-spacing:0.2em;text-transform:uppercase;color:#6b7280">Verification code</p>
+        <p style="margin:0;font-size:30px;font-weight:700;letter-spacing:0.35em;color:#111827">${escapeHtml(verificationCode)}</p>
+        <p style="margin:12px 0 0;font-size:13px;color:#6b7280">Expires in ${escapeHtml(String(expiresInMinutes))} minutes</p>
+      </div>
+      <p style="font-size:13px;color:#6b7280">${escapeHtml(footer)}</p>
+    </div>
+  `;
+
+  return { subject, text, html };
+}
+
+async function resolveMailConfig(workspaceId: string) {
+  const workspaceConfig = await getWorkspaceMailConnection(workspaceId);
+
+  if (workspaceConfig) {
+    return {
+      source: "workspace" as const,
+      fromEmail: workspaceConfig.fromEmail,
+      clientId: workspaceConfig.clientId,
+      clientSecret: workspaceConfig.clientSecret,
+      refreshToken: workspaceConfig.refreshToken,
+    };
+  }
+
+  if (!isGlobalMailConfigured()) {
+    return null;
+  }
+
+  return {
+    source: "global" as const,
+    fromEmail: process.env.GOOGLE_MAIL_FROM?.trim().toLowerCase() ?? "",
+    clientId: process.env.GOOGLE_MAIL_CLIENT_ID?.trim() ?? "",
+    clientSecret: process.env.GOOGLE_MAIL_CLIENT_SECRET?.trim() ?? "",
+    refreshToken: process.env.GOOGLE_MAIL_REFRESH_TOKEN?.trim() ?? "",
+  };
+}
+
+async function getGoogleAccessToken(config: {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}) {
   const response = await fetch(gmailTokenUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
-      client_id: process.env.GOOGLE_MAIL_CLIENT_ID?.trim() ?? "",
-      client_secret: process.env.GOOGLE_MAIL_CLIENT_SECRET?.trim() ?? "",
-      refresh_token: process.env.GOOGLE_MAIL_REFRESH_TOKEN?.trim() ?? "",
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      refresh_token: config.refreshToken,
       grant_type: "refresh_token",
     }),
   });

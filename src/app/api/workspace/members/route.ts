@@ -13,7 +13,7 @@ import {
 } from "@/lib/workspace-members-store";
 import {
   buildWorkspaceInviteEmail,
-  sendMail,
+  sendWorkspaceMail,
   type MailDeliveryResult,
 } from "@/lib/mail-service";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
@@ -70,6 +70,7 @@ export async function POST(request: Request) {
     });
     let mailDelivery: MailDeliveryResult = {
       status: "skipped",
+      source: "none",
       reason: "Invitation email was not attempted.",
     };
 
@@ -85,13 +86,15 @@ export async function POST(request: Request) {
         signInUrl,
       });
 
-      mailDelivery = await sendMail({
+      mailDelivery = await sendWorkspaceMail({
+        workspaceId: session.workspaceId,
         to: email,
         ...message,
       });
     } catch (mailError) {
       mailDelivery = {
         status: "skipped",
+        source: "none",
         reason:
           mailError instanceof Error
             ? mailError.message

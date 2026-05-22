@@ -5,7 +5,10 @@ import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from "pg"
 declare global {
   var __hrBoardPostgresPool: Pool | undefined;
   var __hrBoardPostgresSchemaPromise: Promise<void> | undefined;
+  var __hrBoardPostgresSchemaKey: string | undefined;
 }
+
+const POSTGRES_SCHEMA_KEY = "2026-05-22-auth-challenges-v1";
 
 export function isPostgresConfigured() {
   return Boolean(process.env.DATABASE_URL?.trim());
@@ -20,6 +23,12 @@ export async function queryPostgres<T extends QueryResultRow>(
   try {
     return await getPostgresPool().query<T>(text, values);
   } catch (error) {
+    if (isSchemaDriftPostgresError(error)) {
+      global.__hrBoardPostgresSchemaPromise = undefined;
+      await ensurePostgresSchema();
+      return getPostgresPool().query<T>(text, values);
+    }
+
     if (!isTransientPostgresError(error)) {
       throw error;
     }
@@ -38,6 +47,12 @@ export async function withPostgresTransaction<T>(
   try {
     return await runPostgresTransaction(callback);
   } catch (error) {
+    if (isSchemaDriftPostgresError(error)) {
+      global.__hrBoardPostgresSchemaPromise = undefined;
+      await ensurePostgresSchema();
+      return runPostgresTransaction(callback);
+    }
+
     if (!isTransientPostgresError(error)) {
       throw error;
     }
@@ -69,6 +84,11 @@ async function runPostgresTransaction<T>(
 async function ensurePostgresSchema() {
   if (!isPostgresConfigured()) {
     return;
+  }
+
+  if (global.__hrBoardPostgresSchemaKey !== POSTGRES_SCHEMA_KEY) {
+    global.__hrBoardPostgresSchemaKey = POSTGRES_SCHEMA_KEY;
+    global.__hrBoardPostgresSchemaPromise = undefined;
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -200,6 +220,41 @@ async function createSchema() {
       ON workspace_sessions (expires_at DESC)
     `,
     `
+    CREATE TABLE IF NOT EXISTS workspace_mail_connections (
+      workspace_id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL DEFAULT 'gmail',
+      from_email TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      client_secret TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS auth_challenges (
+      id TEXT PRIMARY KEY,
+      purpose TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      email TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 5,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      consumed_at TIMESTAMPTZ NULL
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_auth_challenges_workspace_purpose_email
+      ON auth_challenges (workspace_id, purpose, email, created_at DESC)
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_auth_challenges_expires_at
+      ON auth_challenges (expires_at DESC)
+    `,
+    `
     CREATE TABLE IF NOT EXISTS hiring_forms (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -315,6 +370,20 @@ function isTransientPostgresError(error: unknown) {
     message.includes("etimedout") ||
     message.includes("terminating connection")
   );
+}
+
+function isSchemaDriftPostgresError(error: unknown) {
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+
+  return code === "42P01" || message.includes('relation "') && message.includes("does not exist");
 }
 
 function resolveSslConfig(connectionString: string) {

@@ -1,8 +1,10 @@
 import "server-only";
 
+import { deleteAuthChallengesByWorkspaceId } from "@/lib/auth-challenge-store";
 import { deleteLocalWorkspaceAccessResetRequests } from "@/lib/local-workspace-access-reset-store";
 import { deleteLocalWorkspaceAccessRecord } from "@/lib/local-workspace-access-store";
 import { deleteLocalWorkspaceHiringData } from "@/lib/local-hiring-funnel-store";
+import { deleteLocalWorkspaceMailConnection } from "@/lib/local-workspace-mail-store";
 import { deleteLocalWorkspaceMembers } from "@/lib/local-workspace-members-store";
 import { deleteLocalWorkspaceScreeningSessions } from "@/lib/local-screening-session-store";
 import { deleteLocalWorkspaceSettings } from "@/lib/local-workspace-settings-store";
@@ -25,6 +27,8 @@ export async function deleteWorkspace(workspaceId: string) {
       deleteLocalWorkspaceMembers(normalizedWorkspaceId),
       deleteLocalWorkspaceAccessResetRequests(normalizedWorkspaceId),
       deleteLocalWorkspaceAccessRecord(normalizedWorkspaceId),
+      deleteLocalWorkspaceMailConnection(normalizedWorkspaceId),
+      deleteAuthChallengesByWorkspaceId(normalizedWorkspaceId),
       deleteLocalWorkspaceSettings(normalizedWorkspaceId),
     ]);
 
@@ -53,6 +57,12 @@ export async function deleteWorkspace(workspaceId: string) {
         normalizedWorkspaceId,
       ]),
       client.query("DELETE FROM workspace_access_records WHERE workspace_id = $1", [
+        normalizedWorkspaceId,
+      ]),
+      client.query("DELETE FROM workspace_mail_connections WHERE workspace_id = $1", [
+        normalizedWorkspaceId,
+      ]),
+      client.query("DELETE FROM auth_challenges WHERE workspace_id = $1", [
         normalizedWorkspaceId,
       ]),
       client.query("DELETE FROM workspace_settings WHERE workspace_id = $1", [

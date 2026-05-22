@@ -15,8 +15,15 @@ export default function SignInForm({
 }) {
   const router = useRouter();
   const { replaceSettings } = useWorkspace();
+  const [phase, setPhase] = useState<"credentials" | "verify">("credentials");
   const [workspaceId, setWorkspaceId] = useState("");
   const [accessKey, setAccessKey] = useState("");
+  const [challengeId, setChallengeId] = useState("");
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationExpiresInMinutes, setVerificationExpiresInMinutes] = useState<number | null>(
+    null
+  );
   const [showAccessKey, setShowAccessKey] = useState(false);
   const [keepSignedIn, setKeepSignedIn] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +34,70 @@ export default function SignInForm({
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const [isRequestingReset, setIsRequestingReset] = useState(false);
+
+  async function requestSignInCode() {
+    const response = await fetch("/api/auth/signin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        workspaceId,
+        accessKey,
+        keepSignedIn,
+        next: normalizeClientNextPath(nextPath),
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          error?: string;
+          challengeId?: string;
+          verificationEmail?: string;
+          expiresInMinutes?: number;
+        }
+      | null;
+
+    if (!response.ok || !payload?.challengeId || !payload?.verificationEmail) {
+      throw new Error(payload?.error || "I couldn't send the sign-in code.");
+    }
+
+    setChallengeId(payload.challengeId);
+    setVerificationEmail(payload.verificationEmail);
+    setVerificationExpiresInMinutes(payload.expiresInMinutes ?? null);
+    setVerificationCode("");
+    setPhase("verify");
+  }
+
+  async function verifySignInCode() {
+    const response = await fetch("/api/auth/signin/verify", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        challengeId,
+        verificationCode,
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          error?: string;
+          nextPath?: string;
+          settings?: WorkspaceSettings;
+        }
+      | null;
+
+    if (!response.ok) {
+      throw new Error(payload?.error || "I couldn't verify that sign-in code.");
+    }
+
+    if (payload?.settings) {
+      replaceSettings(payload.settings);
+    }
+
+    router.replace(payload?.nextPath || "/pipeline");
+    router.refresh();
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,43 +110,40 @@ export default function SignInForm({
     setError(null);
 
     try {
-      const response = await fetch("/api/auth/signin", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          workspaceId,
-          accessKey,
-          keepSignedIn,
-          next: normalizeClientNextPath(nextPath),
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            error?: string;
-            nextPath?: string;
-            settings?: WorkspaceSettings;
-          }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(
-          payload?.error || "I couldn't sign you into that workspace."
-        );
+      if (phase === "credentials") {
+        await requestSignInCode();
+        return;
       }
 
-      if (payload?.settings) {
-        replaceSettings(payload.settings);
-      }
-
-      router.replace(payload?.nextPath || "/pipeline");
-      router.refresh();
+      await verifySignInCode();
     } catch (submissionError) {
       setError(
         submissionError instanceof Error
           ? submissionError.message
-          : "I couldn't sign you into that workspace."
+          : phase === "credentials"
+            ? "I couldn't send the sign-in code."
+            : "I couldn't verify that sign-in code."
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleResendCode() {
+    if (isSubmitting) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await requestSignInCode();
+    } catch (submissionError) {
+      setError(
+        submissionError instanceof Error
+          ? submissionError.message
+          : "I couldn't send a new sign-in code."
       );
     } finally {
       setIsSubmitting(false);
@@ -153,140 +221,185 @@ export default function SignInForm({
               </span>
               <div>
                 <h1 className="text-title-sm font-semibold text-gray-800 dark:text-white/90 sm:text-title-md">
-                  Sign in to your hiring workspace
+                  {phase === "credentials"
+                    ? "Sign in to your hiring workspace"
+                    : "Complete secure sign in"}
                 </h1>
                 <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
-                  Use the workspace ID and either the shared admin key for your company or the
-                  member invite key issued to you. Candidate records stay locked to that workspace
-                  session.
+                  {phase === "credentials"
+                    ? "Use the workspace ID and either the shared admin key for your company or the member invite key issued to you. Candidate records stay locked to that workspace session."
+                    : `We sent a 6-digit sign-in code to ${verificationEmail}. Enter it below${verificationExpiresInMinutes ? ` within ${verificationExpiresInMinutes} minutes` : ""} to finish 2-step sign in.`}
                 </p>
               </div>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
-                  Workspace ID
-                </span>
-                <input
-                  value={workspaceId}
-                  onChange={(event) => setWorkspaceId(event.target.value)}
-                  className={inputClassName}
-                  placeholder="northwind-talent"
-                  autoComplete="organization"
-                  spellCheck={false}
-                />
-              </label>
+              {phase === "credentials" ? (
+                <>
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                      Workspace ID
+                    </span>
+                    <input
+                      value={workspaceId}
+                      onChange={(event) => setWorkspaceId(event.target.value)}
+                      className={inputClassName}
+                      placeholder="northwind-talent"
+                      autoComplete="organization"
+                      spellCheck={false}
+                    />
+                  </label>
 
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
-                  Access key
-                </span>
-                <div className="relative">
-                  <input
-                    value={accessKey}
-                    onChange={(event) => setAccessKey(event.target.value)}
-                    type={showAccessKey ? "text" : "password"}
-                    className={`${inputClassName} pr-12`}
-                    placeholder="Enter your shared or member access key"
-                    autoComplete="current-password"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowAccessKey((current) => !current)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                    aria-label={showAccessKey ? "Hide access key" : "Show access key"}
-                  >
-                    {showAccessKey ? (
-                      <EyeIcon className="fill-current" />
-                    ) : (
-                      <EyeCloseIcon className="fill-current" />
-                    )}
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowResetRequest((current) => !current);
-                    setResetMessage(null);
-                    setResetError(null);
-                  }}
-                  className="text-sm font-medium text-brand-500 transition hover:text-brand-600 dark:text-brand-300 dark:hover:text-brand-200"
-                >
-                  Forgot access key?
-                </button>
-              </label>
-
-              {showResetRequest ? (
-                <div className="rounded-2xl border border-brand-100 bg-brand-50/80 p-4 dark:border-brand-500/20 dark:bg-brand-500/10">
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                        Request a reset from the platform owner
-                      </p>
-                      <p className="mt-1 text-sm leading-6 text-gray-600 dark:text-gray-300">
-                        Enter your workspace ID above, then add the admin email the owner should
-                        verify before issuing a new access key.
-                      </p>
-                    </div>
-                    <label className="block space-y-2">
-                      <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
-                        Admin email
-                      </span>
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                      Access key
+                    </span>
+                    <div className="relative">
                       <input
-                        value={resetEmail}
-                        onChange={(event) => setResetEmail(event.target.value)}
-                        className={inputClassName}
-                        placeholder="team@company.com"
-                        type="email"
-                        autoComplete="email"
+                        value={accessKey}
+                        onChange={(event) => setAccessKey(event.target.value)}
+                        type={showAccessKey ? "text" : "password"}
+                        className={`${inputClassName} pr-12`}
+                        placeholder="Enter your shared or member access key"
+                        autoComplete="current-password"
                       />
-                    </label>
-                    <label className="block space-y-2">
-                      <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
-                        Note for owner
-                      </span>
-                      <textarea
-                        value={resetNote}
-                        onChange={(event) => setResetNote(event.target.value)}
-                        className={`${inputClassName} min-h-24 resize-none`}
-                        placeholder="Optional: tell the owner why this needs to be reset."
-                        maxLength={600}
-                      />
-                    </label>
-                    {resetError ? (
-                      <div className="rounded-2xl border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-200">
-                        {resetError}
-                      </div>
-                    ) : null}
-                    {resetMessage ? (
-                      <div className="rounded-2xl border border-success-200 bg-success-50 px-4 py-3 text-sm text-success-700 dark:border-success-500/20 dark:bg-success-500/10 dark:text-success-200">
-                        {resetMessage}
-                      </div>
-                    ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setShowAccessKey((current) => !current)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        aria-label={showAccessKey ? "Hide access key" : "Show access key"}
+                      >
+                        {showAccessKey ? (
+                          <EyeIcon className="fill-current" />
+                        ) : (
+                          <EyeCloseIcon className="fill-current" />
+                        )}
+                      </button>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => void handleResetRequest()}
-                      disabled={isRequestingReset}
-                      className="inline-flex w-full items-center justify-center rounded-2xl border border-brand-200 bg-white px-4 py-3 text-sm font-semibold text-brand-600 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-100 dark:hover:bg-brand-500/20"
+                      onClick={() => {
+                        setShowResetRequest((current) => !current);
+                        setResetMessage(null);
+                        setResetError(null);
+                      }}
+                      className="text-sm font-medium text-brand-500 transition hover:text-brand-600 dark:text-brand-300 dark:hover:text-brand-200"
                     >
-                      {isRequestingReset ? "Sending request..." : "Send reset request"}
+                      Forgot access key?
+                    </button>
+                  </label>
+
+                  {showResetRequest ? (
+                    <div className="rounded-2xl border border-brand-100 bg-brand-50/80 p-4 dark:border-brand-500/20 dark:bg-brand-500/10">
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                            Request a reset from the platform owner
+                          </p>
+                          <p className="mt-1 text-sm leading-6 text-gray-600 dark:text-gray-300">
+                            Enter your workspace ID above, then add the admin email the owner should
+                            verify before issuing a new access key.
+                          </p>
+                        </div>
+                        <label className="block space-y-2">
+                          <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                            Admin email
+                          </span>
+                          <input
+                            value={resetEmail}
+                            onChange={(event) => setResetEmail(event.target.value)}
+                            className={inputClassName}
+                            placeholder="team@company.com"
+                            type="email"
+                            autoComplete="email"
+                          />
+                        </label>
+                        <label className="block space-y-2">
+                          <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                            Note for owner
+                          </span>
+                          <textarea
+                            value={resetNote}
+                            onChange={(event) => setResetNote(event.target.value)}
+                            className={`${inputClassName} min-h-24 resize-none`}
+                            placeholder="Optional: tell the owner why this needs to be reset."
+                            maxLength={600}
+                          />
+                        </label>
+                        {resetError ? (
+                          <div className="rounded-2xl border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-200">
+                            {resetError}
+                          </div>
+                        ) : null}
+                        {resetMessage ? (
+                          <div className="rounded-2xl border border-success-200 bg-success-50 px-4 py-3 text-sm text-success-700 dark:border-success-500/20 dark:bg-success-500/10 dark:text-success-200">
+                            {resetMessage}
+                          </div>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => void handleResetRequest()}
+                          disabled={isRequestingReset}
+                          className="inline-flex w-full items-center justify-center rounded-2xl border border-brand-200 bg-white px-4 py-3 text-sm font-semibold text-brand-600 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-100 dark:hover:bg-brand-500/20"
+                        >
+                          {isRequestingReset ? "Sending request..." : "Send reset request"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <label className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-white/[0.03]">
+                    <input
+                      type="checkbox"
+                      checked={keepSignedIn}
+                      onChange={(event) => setKeepSignedIn(event.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500/20 dark:border-gray-700"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">
+                      Keep this workspace signed in on this browser
+                    </span>
+                  </label>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                      Sign-in code
+                    </span>
+                    <input
+                      value={verificationCode}
+                      onChange={(event) =>
+                        setVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                      }
+                      className={`${inputClassName} text-center text-lg tracking-[0.35em]`}
+                      placeholder="123456"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                    />
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPhase("credentials");
+                        setVerificationCode("");
+                        setError(null);
+                      }}
+                      className="inline-flex items-center justify-center rounded-2xl border border-gray-300 px-4 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
+                    >
+                      Go back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleResendCode()}
+                      disabled={isSubmitting}
+                      className="inline-flex items-center justify-center rounded-2xl border border-brand-200 px-4 py-3 text-sm font-medium text-brand-600 transition hover:bg-brand-50 dark:border-brand-500/30 dark:text-brand-200 dark:hover:bg-brand-500/10"
+                    >
+                      {isSubmitting ? "Sending..." : "Send a new code"}
                     </button>
                   </div>
                 </div>
-              ) : null}
-
-              <label className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-white/[0.03]">
-                <input
-                  type="checkbox"
-                  checked={keepSignedIn}
-                  onChange={(event) => setKeepSignedIn(event.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500/20 dark:border-gray-700"
-                />
-                <span className="text-sm text-gray-700 dark:text-gray-300">
-                  Keep this workspace signed in on this browser
-                </span>
-              </label>
+              )}
 
               {error ? (
                 <div className="rounded-2xl border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-200">
@@ -299,7 +412,13 @@ export default function SignInForm({
                 disabled={isSubmitting}
                 className="inline-flex w-full items-center justify-center rounded-2xl bg-brand-500 px-5 py-3 text-sm font-medium text-white shadow-theme-xs transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300 dark:disabled:bg-brand-500/50"
               >
-                {isSubmitting ? "Signing in..." : "Enter workspace"}
+                {isSubmitting
+                  ? phase === "credentials"
+                    ? "Sending code..."
+                    : "Verifying code..."
+                  : phase === "credentials"
+                    ? "Continue to 2-step sign in"
+                    : "Verify and enter workspace"}
               </button>
             </form>
 
@@ -308,9 +427,9 @@ export default function SignInForm({
                 What this protects
               </p>
               <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
-                Screenings, pipeline records, exports, downloads, and workspace settings now
-                respect the signed company session instead of trusting a browser-selected
-                workspace ID alone.
+                {phase === "credentials"
+                  ? "After your access key is accepted, we send a short 2-step sign-in code to the workspace email tied to that credential."
+                  : "This extra sign-in code protects screenings, pipeline records, exports, downloads, and workspace settings even if an access key is shared too widely."}
               </p>
             </div>
 

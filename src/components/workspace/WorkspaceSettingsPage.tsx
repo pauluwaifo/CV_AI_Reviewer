@@ -2,7 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import {
   buildDefaultWorkspaceSettings,
@@ -22,19 +22,33 @@ type WorkspaceMember = {
   updatedAt: string;
 };
 
+type WorkspaceMailConnectionSummary = {
+  provider: "gmail";
+  source: "workspace" | "global" | "none";
+  fromEmail: string;
+  hasWorkspaceConnection: boolean;
+  updatedAt: string | null;
+};
+
 export default function WorkspaceSettingsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { settings, replaceSettings } = useWorkspace();
   const [draft, setDraft] = useState(settings);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
   const [inviteAccessKey, setInviteAccessKey] = useState("");
+  const [mailConnection, setMailConnection] = useState<WorkspaceMailConnectionSummary | null>(null);
+  const [workspaceSenderEmail, setWorkspaceSenderEmail] = useState("");
   const [newWorkspaceAccessKey, setNewWorkspaceAccessKey] = useState("");
   const [resetAccessKey, setResetAccessKey] = useState("");
   const [deleteWorkspaceConfirmation, setDeleteWorkspaceConfirmation] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
+  const [isLoadingMailConnection, setIsLoadingMailConnection] = useState(true);
+  const [isConnectingMailConnection, setIsConnectingMailConnection] = useState(false);
+  const [isDisconnectingMailConnection, setIsDisconnectingMailConnection] = useState(false);
   const [isResettingKey, setIsResettingKey] = useState(false);
   const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
   const [updatingMemberId, setUpdatingMemberId] = useState("");
@@ -86,6 +100,68 @@ export default function WorkspaceSettingsPage() {
       isCurrent = false;
     };
   }, [settings.workspaceId]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    async function loadMailConnection() {
+      setIsLoadingMailConnection(true);
+
+      try {
+        const response = await fetch("/api/workspace/mail", {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { connection?: WorkspaceMailConnectionSummary }
+          | null;
+
+        if (!isCurrent) {
+          return;
+        }
+
+        setMailConnection(payload?.connection ?? null);
+        setWorkspaceSenderEmail(
+          payload?.connection?.source === "workspace" ? payload.connection.fromEmail : ""
+        );
+      } catch {
+        if (!isCurrent) {
+          return;
+        }
+
+        setMailConnection(null);
+        setWorkspaceSenderEmail("");
+      } finally {
+        if (isCurrent) {
+          setIsLoadingMailConnection(false);
+        }
+      }
+    }
+
+    void loadMailConnection();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [settings.workspaceId]);
+
+  useEffect(() => {
+    const mailStatus = searchParams.get("mail");
+    const mailMessage = searchParams.get("mail_message");
+
+    if (!mailStatus || isLoadingMailConnection) {
+      return;
+    }
+
+    setFeedback({
+      tone: mailStatus === "connected" ? "success" : "error",
+      message:
+        mailMessage ||
+        (mailStatus === "connected"
+          ? "Google inbox connected for this workspace."
+          : "I couldn't finish the Google inbox connection."),
+    });
+    router.replace("/workspace");
+  }, [isLoadingMailConnection, router, searchParams]);
 
   async function handleSave() {
     if (isSaving) {
@@ -222,7 +298,12 @@ export default function WorkspaceSettingsPage() {
             member?: WorkspaceMember;
             accessKey?: string;
             error?: string;
-            mailDelivery?: { status: "sent" | "skipped"; reason?: string };
+            mailDelivery?: {
+              status: "sent" | "skipped";
+              reason?: string;
+              source?: "workspace" | "global" | "none";
+              fromEmail?: string;
+            };
           }
         | null;
 
@@ -239,7 +320,7 @@ export default function WorkspaceSettingsPage() {
       setInviteAccessKey(payload.accessKey);
       const emailMessage =
         payload.mailDelivery?.status === "sent"
-          ? " Invitation email sent."
+          ? ` Invitation email sent from ${payload.mailDelivery.fromEmail ?? "the connected sender"}.`
           : " Email is not configured yet, so share the generated key manually.";
       setFeedback({
         tone: "success",
@@ -370,6 +451,97 @@ export default function WorkspaceSettingsPage() {
       tone: "success",
       message: "Suggested shared access key generated. Review it, then save it for this workspace.",
     });
+  }
+
+  async function handleConnectWorkspaceMailConnection() {
+    if (isConnectingMailConnection) {
+      return;
+    }
+
+    const fromEmail = workspaceSenderEmail.trim().toLowerCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) {
+      setFeedback({
+        tone: "error",
+        message: "Enter a valid company sender email address.",
+      });
+      return;
+    }
+
+    setIsConnectingMailConnection(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/workspace/mail/connect", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fromEmail,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { authUrl?: string; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.authUrl) {
+        throw new Error(payload?.error || "I couldn't start that Google inbox connection.");
+      }
+
+      window.location.assign(payload.authUrl);
+    } catch (mailError) {
+      setFeedback({
+        tone: "error",
+        message:
+          mailError instanceof Error
+            ? mailError.message
+            : "I couldn't start that Google inbox connection.",
+      });
+      setIsConnectingMailConnection(false);
+    }
+  }
+
+  async function handleDisconnectWorkspaceMailConnection() {
+    if (isDisconnectingMailConnection || !mailConnection?.hasWorkspaceConnection) {
+      return;
+    }
+
+    setIsDisconnectingMailConnection(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/workspace/mail", {
+        method: "DELETE",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; connection?: WorkspaceMailConnectionSummary; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.ok || !payload.connection) {
+        throw new Error(payload?.error || "I couldn't disconnect that workspace sender.");
+      }
+
+      setMailConnection(payload.connection);
+      setWorkspaceSenderEmail("");
+      setFeedback({
+        tone: "success",
+        message:
+          payload.connection.source === "global"
+            ? `Workspace sender removed. Invites will fall back to ${payload.connection.fromEmail}.`
+            : "Workspace sender removed. Invites will keep generating access keys, but no email will be sent until a sender is connected.",
+      });
+    } catch (mailError) {
+      setFeedback({
+        tone: "error",
+        message:
+          mailError instanceof Error
+            ? mailError.message
+            : "I couldn't disconnect that workspace sender.",
+      });
+    } finally {
+      setIsDisconnectingMailConnection(false);
+    }
   }
 
   async function handleDeleteWorkspace() {
@@ -688,7 +860,7 @@ export default function WorkspaceSettingsPage() {
         </article>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
@@ -757,6 +929,105 @@ export default function WorkspaceSettingsPage() {
           </div>
         </article>
 
+        <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
+              Outbound email
+            </p>
+            <h2 className="mt-2 text-xl font-semibold text-gray-900 dark:text-white">
+              Connect this company inbox
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
+              Let this workspace send invites from its own hiring inbox instead of the owner-wide
+              fallback. Use the Gmail account or verified alias that should appear in the
+              candidate&apos;s inbox.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/70">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                  Current sender
+                </p>
+                <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                  {isLoadingMailConnection
+                    ? "Loading sender status..."
+                    : mailConnection?.source === "workspace"
+                      ? `${mailConnection.fromEmail} is connected directly to this workspace.`
+                      : mailConnection?.source === "global"
+                        ? `${mailConnection.fromEmail} is the global fallback until this workspace connects its own inbox.`
+                        : "No sender is configured yet. Member invites will still create keys, but the app will not send the email automatically."}
+                </p>
+              </div>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                  mailConnection?.source === "workspace"
+                    ? "bg-success-50 text-success-700 dark:bg-success-500/10 dark:text-success-200"
+                    : mailConnection?.source === "global"
+                      ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-100"
+                      : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                }`}
+              >
+                {mailConnection?.source === "workspace"
+                  ? "Workspace sender active"
+                  : mailConnection?.source === "global"
+                    ? "Using global fallback"
+                    : "No sender configured"}
+              </span>
+            </div>
+            {mailConnection?.updatedAt ? (
+              <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                Workspace sender last updated {formatDate(mailConnection.updatedAt)}.
+              </p>
+            ) : null}
+          </div>
+
+          <Field
+            label="Company sender email"
+            help="Enter the hiring inbox this company wants to send from. After that, Google opens once so the admin can approve it."
+          >
+            <input
+              value={workspaceSenderEmail}
+              onChange={(event) => setWorkspaceSenderEmail(event.target.value)}
+              className={inputClassName}
+              placeholder="jobs@company.com"
+              type="email"
+            />
+          </Field>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => void handleConnectWorkspaceMailConnection()}
+              disabled={isConnectingMailConnection}
+              className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300"
+            >
+              {isConnectingMailConnection
+                ? "Opening Google..."
+                : mailConnection?.hasWorkspaceConnection
+                  ? "Reconnect Google inbox"
+                  : "Connect Google inbox"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDisconnectWorkspaceMailConnection()}
+              disabled={isDisconnectingMailConnection || !mailConnection?.hasWorkspaceConnection}
+              className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
+            >
+              {isDisconnectingMailConnection ? "Disconnecting..." : "Disconnect workspace sender"}
+            </button>
+          </div>
+
+          <div className="rounded-lg border border-dashed border-gray-300 px-4 py-4 text-sm leading-6 text-gray-600 dark:border-gray-700 dark:text-gray-300">
+            Non-technical admins only need the company email here. After they click connect, Google
+            handles the sign-in and approval flow, and the workspace starts sending invites from
+            that inbox instead of the owner-wide mailbox.
+          </div>
+        </article>
+      </section>
+
+      <section>
         <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">

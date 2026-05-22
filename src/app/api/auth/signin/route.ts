@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 
+import { createAuthChallenge } from "@/lib/auth-challenge-store";
 import {
-  applyWorkspaceSessionCookie,
   authenticateWorkspaceCredentials,
-  createWorkspaceSession,
   normalizeNextPath,
 } from "@/lib/workspace-auth";
+import {
+  buildWorkspaceSignInCodeEmail,
+  sendWorkspaceMail,
+} from "@/lib/mail-service";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 import { sanitizeWorkspaceId } from "@/lib/workspace-settings";
 
@@ -48,20 +51,40 @@ export async function POST(request: Request) {
       );
     }
 
-    const [{ token, maxAgeSeconds, session }, settings] = await Promise.all([
-      createWorkspaceSession(authentication, keepSignedIn),
-      getWorkspaceSettings(authentication.workspaceId),
-    ]);
-    const response = NextResponse.json({
-      ok: true,
-      nextPath,
-      session,
-      settings,
+    const settings = await getWorkspaceSettings(authentication.workspaceId);
+    const challenge = await createAuthChallenge({
+      purpose: "workspace-signin",
+      workspaceId: authentication.workspaceId,
+      email: authentication.email,
+      payload: {
+        authentication,
+        keepSignedIn,
+        nextPath,
+      },
+    });
+    const message = buildWorkspaceSignInCodeEmail({
+      appName: settings.appName,
+      organizationName: settings.organizationName,
+      verificationCode: challenge.verificationCode,
+      expiresInMinutes: challenge.expiresInMinutes,
+    });
+    const mailDelivery = await sendWorkspaceMail({
+      workspaceId: authentication.workspaceId,
+      to: authentication.email,
+      ...message,
     });
 
-    applyWorkspaceSessionCookie(response, token, maxAgeSeconds);
+    if (mailDelivery.status !== "sent") {
+      throw new Error(mailDelivery.reason || "I couldn't send the sign-in code right now.");
+    }
 
-    return response;
+    return NextResponse.json({
+      ok: true,
+      requiresTwoFactor: true,
+      challengeId: challenge.challengeId,
+      verificationEmail: challenge.email,
+      expiresInMinutes: challenge.expiresInMinutes,
+    });
   } catch (error) {
     if (error instanceof Error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

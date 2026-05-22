@@ -1,17 +1,13 @@
 import { NextResponse } from "next/server";
 
-import { createWorkspaceAccessRecord } from "@/lib/workspace-access-store";
+import { createAuthChallenge } from "@/lib/auth-challenge-store";
+import { getWorkspaceAccessRecord } from "@/lib/workspace-access-store";
+import { hashWorkspaceAccessKey, normalizeNextPath } from "@/lib/workspace-auth";
 import {
-  applyWorkspaceSessionCookie,
-  createWorkspaceSession,
-  hashWorkspaceAccessKey,
-  normalizeNextPath,
-} from "@/lib/workspace-auth";
-import { saveWorkspaceSettings } from "@/lib/workspace-settings-store";
-import {
-  buildDefaultWorkspaceSettings,
-  sanitizeWorkspaceId,
-} from "@/lib/workspace-settings";
+  buildWorkspaceVerificationCodeEmail,
+  sendWorkspaceMail,
+} from "@/lib/mail-service";
+import { sanitizeWorkspaceId } from "@/lib/workspace-settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,40 +73,53 @@ export async function POST(request: Request) {
       );
     }
 
-    await createWorkspaceAccessRecord({
-      workspaceId,
-      contactEmail,
-      accessKeyHash: hashWorkspaceAccessKey(accessKey),
-    });
+    const existingWorkspace = await getWorkspaceAccessRecord(workspaceId);
 
-    const defaultSettings = buildDefaultWorkspaceSettings(workspaceId);
-    const settings = await saveWorkspaceSettings(workspaceId, {
-      ...defaultSettings,
+    if (existingWorkspace) {
+      return NextResponse.json(
+        { error: "That workspace ID is already in use." },
+        { status: 409 }
+      );
+    }
+
+    const challenge = await createAuthChallenge({
+      purpose: "workspace-signup",
+      workspaceId,
+      email: contactEmail,
+      payload: {
+        workspaceId,
+        organizationName,
+        contactEmail,
+        accessKeyHash: hashWorkspaceAccessKey(accessKey),
+        keepSignedIn,
+        nextPath,
+      },
+    });
+    const message = buildWorkspaceVerificationCodeEmail({
       appName: `${organizationName} Hiring`,
       organizationName,
-      tagline: `Secure recruiting workspace for ${organizationName}.`,
+      verificationCode: challenge.verificationCode,
+      expiresInMinutes: challenge.expiresInMinutes,
+    });
+    const mailDelivery = await sendWorkspaceMail({
       workspaceId,
+      to: contactEmail,
+      ...message,
     });
-    const { token, maxAgeSeconds, session } = await createWorkspaceSession(
-      {
-        workspaceId,
-        role: "admin",
-        principalType: "shared",
-        email: contactEmail,
-        memberId: null,
-      },
-      keepSignedIn
-    );
-    const response = NextResponse.json({
+
+    if (mailDelivery.status !== "sent") {
+      throw new Error(
+        mailDelivery.reason || "I couldn't send the verification code right now."
+      );
+    }
+
+    return NextResponse.json({
       ok: true,
-      nextPath,
-      session,
-      settings,
+      requiresVerification: true,
+      challengeId: challenge.challengeId,
+      verificationEmail: challenge.email,
+      expiresInMinutes: challenge.expiresInMinutes,
     });
-
-    applyWorkspaceSessionCookie(response, token, maxAgeSeconds);
-
-    return response;
   } catch (error) {
     if (error instanceof Error) {
       const status = error.message.includes("already in use") ? 409 : 500;
