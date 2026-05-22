@@ -6,6 +6,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useWorkspace } from "@/context/WorkspaceContext";
 import {
+  DEFAULT_HIRING_FORM_SCREENING_POLICY,
+  evaluateHiringApplicationFilter,
+  normalizeHiringFormScreeningPolicy,
+} from "@/lib/hiring-screening-policy";
+import {
   appendWorkspaceQuery,
   buildWorkspaceApiHeaders,
 } from "@/lib/workspace-settings";
@@ -21,6 +26,7 @@ import type { RoleSetup } from "@/types/document-intelligence";
 type LoadState = "idle" | "loading" | "ready";
 type PipelineTab = "create" | "review";
 type BuilderView = "questions" | "templates";
+type BuilderModal = "aiForm" | "jobDescription" | null;
 
 type FormTemplateId = "blank" | "general" | "technical" | "customer";
 
@@ -56,10 +62,118 @@ export default function PipelineDashboardPage() {
   const [activeBuilderTarget, setActiveBuilderTarget] = useState<string>("empty");
   const [expiresAt, setExpiresAt] = useState("");
   const [jobDescriptionFile, setJobDescriptionFile] = useState<File | null>(null);
+  const [jobDescriptionDraftText, setJobDescriptionDraftText] = useState("");
+  const [jobDescriptionDraftName, setJobDescriptionDraftName] = useState("");
+  const [jdGenerationNote, setJdGenerationNote] = useState("");
+  const [isGeneratingJd, setIsGeneratingJd] = useState(false);
+  const [aiFormPrompt, setAiFormPrompt] = useState("");
+  const [formGenerationNote, setFormGenerationNote] = useState("");
+  const [isGeneratingFormDraft, setIsGeneratingFormDraft] = useState(false);
+  const [activeBuilderModal, setActiveBuilderModal] = useState<BuilderModal>(null);
+  const [copyLinkState, setCopyLinkState] = useState<"idle" | "copying" | "copied">("idle");
+  const [isPreparingExport, setIsPreparingExport] = useState(false);
+  const [autoFilterLowRoleMatch, setAutoFilterLowRoleMatch] = useState(
+    DEFAULT_HIRING_FORM_SCREENING_POLICY.autoFilterLowRoleMatch
+  );
+  const [minimumRoleMatchScore, setMinimumRoleMatchScore] = useState(
+    DEFAULT_HIRING_FORM_SCREENING_POLICY.minimumRoleMatchScore
+  );
+  const [showFilteredApplications, setShowFilteredApplications] = useState(false);
+  const currentRoleSetup = useMemo(
+    () =>
+      buildRoleSetup({
+        roleTitle,
+        roleSeniority,
+        roleLocation,
+        roleSummary,
+        mustHaveSkills,
+        niceToHaveSkills,
+        interviewFocus,
+      }),
+    [
+      interviewFocus,
+      mustHaveSkills,
+      niceToHaveSkills,
+      roleLocation,
+      roleSeniority,
+      roleSummary,
+      roleTitle,
+    ]
+  );
+  const canGenerateJobDescription = useMemo(
+    () =>
+      Boolean(
+        title.trim() ||
+          team.trim() ||
+          intro.trim() ||
+          analysisGoal.trim() ||
+          currentRoleSetup.title ||
+          currentRoleSetup.seniority ||
+          currentRoleSetup.location ||
+          currentRoleSetup.summary ||
+          currentRoleSetup.mustHaveSkills.length > 0 ||
+          currentRoleSetup.niceToHaveSkills.length > 0 ||
+          currentRoleSetup.interviewFocus.length > 0
+      ),
+    [analysisGoal, currentRoleSetup, intro, team, title]
+  );
+  const canGenerateFormDraft = useMemo(
+    () => Boolean(aiFormPrompt.trim() || canGenerateJobDescription),
+    [aiFormPrompt, canGenerateJobDescription]
+  );
+  const isBuilderBusy = isSubmitting || isGeneratingFormDraft || isGeneratingJd;
+  const builderBusyMessage = isSubmitting
+    ? editingFormId
+      ? "Saving form changes and refreshing the shared workspace view..."
+      : "Publishing the form and preparing the shared review view..."
+    : isGeneratingFormDraft
+      ? "Generating an editable form draft from your role brief..."
+      : isGeneratingJd
+        ? "Generating a job description draft from your role context..."
+        : "";
+  const jobDescriptionDraftLength = jobDescriptionDraftText.trim().length;
 
+  const selectedFormScreeningPolicy = useMemo(
+    () => normalizeHiringFormScreeningPolicy(selectedForm?.screeningPolicy),
+    [selectedForm?.screeningPolicy]
+  );
+  const applicationFilterResults = useMemo(
+    () =>
+      new Map(
+        (selectedForm?.applications ?? []).map((application) => [
+          application.id,
+          evaluateHiringApplicationFilter(application, selectedFormScreeningPolicy),
+        ])
+      ),
+    [selectedForm?.applications, selectedFormScreeningPolicy]
+  );
+  const primaryQueueApplications = useMemo(
+    () =>
+      (selectedForm?.applications ?? []).filter(
+        (application) => !applicationFilterResults.get(application.id)?.autoFiltered
+      ),
+    [applicationFilterResults, selectedForm?.applications]
+  );
+  const filteredOutApplications = useMemo(
+    () =>
+      (selectedForm?.applications ?? []).filter(
+        (application) => applicationFilterResults.get(application.id)?.autoFiltered
+      ),
+    [applicationFilterResults, selectedForm?.applications]
+  );
+  const visibleApplications = useMemo(
+    () =>
+      showFilteredApplications
+        ? selectedForm?.applications ?? []
+        : primaryQueueApplications,
+    [primaryQueueApplications, selectedForm?.applications, showFilteredApplications]
+  );
   const selectedApplication = useMemo(
-    () => selectedForm?.applications.find((item) => item.id === selectedApplicationId) ?? null,
-    [selectedApplicationId, selectedForm]
+    () =>
+      visibleApplications.find((item) => item.id === selectedApplicationId) ??
+      visibleApplications[0] ??
+      null,
+    [selectedApplicationId, visibleApplications]
   );
   const totalApplications = useMemo(
     () => forms.reduce((sum, item) => sum + item.applicationCount, 0),
@@ -116,6 +230,9 @@ export default function PipelineDashboardPage() {
   const loadFormDetail = useCallback(async (formId: string) => {
     setDetailState("loading");
     setError(null);
+    setSelectedForm(null);
+    setSelectedApplicationId("");
+    setShowFilteredApplications(false);
 
     try {
       const response = await fetch(
@@ -133,7 +250,6 @@ export default function PipelineDashboardPage() {
 
       const nextForm = payload.form ?? null;
       setSelectedForm(nextForm);
-      setSelectedApplicationId("");
       setDetailState("ready");
     } catch (loadError) {
       setError(
@@ -150,11 +266,37 @@ export default function PipelineDashboardPage() {
   useEffect(() => {
     if (!selectedFormId) {
       setSelectedForm(null);
+      setDetailState("idle");
       return;
     }
 
     void loadFormDetail(selectedFormId);
   }, [loadFormDetail, selectedFormId]);
+
+  useEffect(() => {
+    setCopyLinkState("idle");
+  }, [selectedFormId]);
+
+  useEffect(() => {
+    if (pipelineTab !== "create") {
+      setActiveBuilderModal(null);
+    }
+  }, [pipelineTab]);
+
+  useEffect(() => {
+    if (!activeBuilderModal) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setActiveBuilderModal(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeBuilderModal]);
 
   async function handleSaveForm() {
     if (isSubmitting) {
@@ -165,21 +307,18 @@ export default function PipelineDashboardPage() {
     setError(null);
 
     try {
-      const roleSetup = buildRoleSetup({
-        roleTitle,
-        roleSeniority,
-        roleLocation,
-        roleSummary,
-        mustHaveSkills,
-        niceToHaveSkills,
-        interviewFocus,
-      });
       const formData = new FormData();
+      const jdDraftText = jobDescriptionDraftText.trim();
+      const screeningPolicy = normalizeHiringFormScreeningPolicy({
+        autoFilterLowRoleMatch,
+        minimumRoleMatchScore,
+      });
       formData.set("title", title.trim());
       formData.set("team", team.trim());
       formData.set("intro", intro.trim());
       formData.set("analysisGoal", analysisGoal.trim());
-      formData.set("roleSetup", JSON.stringify(roleSetup));
+      formData.set("roleSetup", JSON.stringify(currentRoleSetup));
+      formData.set("screeningPolicy", JSON.stringify(screeningPolicy));
       const publishFields = prepareFieldsForPublish(formFields);
       formData.set("customQuestions", JSON.stringify(buildCustomQuestionsFromFields(publishFields)));
       formData.set("formFields", JSON.stringify(publishFields));
@@ -190,6 +329,13 @@ export default function PipelineDashboardPage() {
 
       if (jobDescriptionFile) {
         formData.set("jobDescriptionFile", jobDescriptionFile);
+      } else if (jdDraftText) {
+        formData.set("jobDescriptionText", jdDraftText);
+        formData.set(
+          "jobDescriptionFileName",
+          jobDescriptionDraftName.trim() ||
+            buildGeneratedJobDescriptionFileName(title, currentRoleSetup.title)
+        );
       }
 
       const endpoint = editingFormId
@@ -225,6 +371,195 @@ export default function PipelineDashboardPage() {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function handleGenerateJobDescription() {
+    if (isGeneratingJd || !canGenerateJobDescription) {
+      return;
+    }
+
+    setIsGeneratingJd(true);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        appendWorkspaceQuery("/api/forms/generate-jd", settings.workspaceId),
+        {
+          method: "POST",
+          headers: {
+            ...workspaceHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: title.trim(),
+            team: team.trim(),
+            intro: intro.trim(),
+            analysisGoal: analysisGoal.trim(),
+            roleSetup: currentRoleSetup,
+          }),
+        }
+      );
+      const payload = (await response.json()) as {
+        jobDescription?: string;
+        provider?: "local" | "gemini" | "huggingface";
+        providerDetail?: string;
+        providerWarnings?: string[];
+        error?: string;
+      };
+
+      if (!response.ok || !payload.jobDescription?.trim()) {
+        throw new Error(payload.error || "I couldn't generate a job description.");
+      }
+
+      setJobDescriptionFile(null);
+      setJobDescriptionDraftText(payload.jobDescription.trim());
+      setJobDescriptionDraftName(
+        buildGeneratedJobDescriptionFileName(title, currentRoleSetup.title)
+      );
+      setJdGenerationNote(
+        describeGeneratedJobDescription(
+          payload.provider || "local",
+          payload.providerDetail,
+          payload.providerWarnings
+        )
+      );
+    } catch (generationError) {
+      setError(
+        generationError instanceof Error
+          ? generationError.message
+          : "I couldn't generate a job description."
+      );
+    } finally {
+      setIsGeneratingJd(false);
+    }
+  }
+
+  async function handleGenerateFormDraft() {
+    if (isGeneratingFormDraft || !canGenerateFormDraft) {
+      return;
+    }
+
+    setIsGeneratingFormDraft(true);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        appendWorkspaceQuery("/api/forms/generate-draft", settings.workspaceId),
+        {
+          method: "POST",
+          headers: {
+            ...workspaceHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: title.trim(),
+            team: team.trim(),
+            intro: intro.trim(),
+            analysisGoal: analysisGoal.trim(),
+            prompt: aiFormPrompt.trim(),
+            roleSetup: currentRoleSetup,
+          }),
+        }
+      );
+      const payload = (await response.json()) as {
+        draft?: {
+          title: string;
+          team: string;
+          intro: string;
+          analysisGoal: string;
+          roleSetup: RoleSetup;
+          formFields: HiringFormField[];
+        };
+        provider?: "local" | "gemini" | "huggingface";
+        providerDetail?: string;
+        providerWarnings?: string[];
+        error?: string;
+      };
+
+      if (!response.ok || !payload.draft) {
+        throw new Error(payload.error || "I couldn't generate a form draft.");
+      }
+
+      applyGeneratedFormDraft(payload.draft);
+      setFormGenerationNote(
+        describeGeneratedFormDraft(
+          payload.provider || "local",
+          payload.providerDetail,
+          payload.providerWarnings
+        )
+      );
+      setBuilderView("questions");
+      setActiveBuilderModal(null);
+    } catch (generationError) {
+      setError(
+        generationError instanceof Error
+          ? generationError.message
+          : "I couldn't generate a form draft."
+      );
+    } finally {
+      setIsGeneratingFormDraft(false);
+    }
+  }
+
+  function applyGeneratedFormDraft(draft: {
+    title: string;
+    team: string;
+    intro: string;
+    analysisGoal: string;
+    roleSetup: RoleSetup;
+    formFields: HiringFormField[];
+  }) {
+    setTitle(draft.title);
+    setTeam(draft.team);
+    setIntro(draft.intro);
+    setAnalysisGoal(draft.analysisGoal);
+    setRoleTitle(draft.roleSetup.title);
+    setRoleSeniority(draft.roleSetup.seniority);
+    setRoleLocation(draft.roleSetup.location);
+    setRoleSummary(draft.roleSetup.summary);
+    setMustHaveSkills(draft.roleSetup.mustHaveSkills.join("\n"));
+    setNiceToHaveSkills(draft.roleSetup.niceToHaveSkills.join("\n"));
+    setInterviewFocus(draft.roleSetup.interviewFocus.join("\n"));
+    const hydratedFields = hydrateGeneratedFormFields(draft.formFields);
+    setFormFields(hydratedFields);
+    setActiveBuilderTarget(hydratedFields[0]?.id || "empty");
+  }
+
+  function clearFormGenerationState() {
+    setAiFormPrompt("");
+    setFormGenerationNote("");
+  }
+
+  function clearJobDescriptionState() {
+    setJobDescriptionFile(null);
+    setJobDescriptionDraftText("");
+    setJobDescriptionDraftName("");
+    setJdGenerationNote("");
+  }
+
+  async function handleCopyPublicLink(publicUrl: string) {
+    if (copyLinkState === "copying") {
+      return;
+    }
+
+    setCopyLinkState("copying");
+
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setCopyLinkState("copied");
+      window.setTimeout(() => setCopyLinkState("idle"), 1800);
+    } catch {
+      setCopyLinkState("idle");
+      setError("I couldn't copy that public form link right now.");
+    }
+  }
+
+  function handleExportResponses(formId: string) {
+    setIsPreparingExport(true);
+    window.location.assign(
+      appendWorkspaceQuery(`/api/forms/${formId}?export=csv`, settings.workspaceId)
+    );
+    window.setTimeout(() => setIsPreparingExport(false), 1800);
   }
 
   async function handleDeleteApplication(applicationId: string) {
@@ -298,6 +633,7 @@ export default function PipelineDashboardPage() {
   }
 
   function resetBuilder() {
+    setActiveBuilderModal(null);
     setEditingFormId("");
     setTitle("");
     setTeam("");
@@ -314,10 +650,15 @@ export default function PipelineDashboardPage() {
     setDraggedFieldId("");
     setActiveBuilderTarget("empty");
     setExpiresAt("");
-    setJobDescriptionFile(null);
+    clearFormGenerationState();
+    clearJobDescriptionState();
+    setAutoFilterLowRoleMatch(DEFAULT_HIRING_FORM_SCREENING_POLICY.autoFilterLowRoleMatch);
+    setMinimumRoleMatchScore(DEFAULT_HIRING_FORM_SCREENING_POLICY.minimumRoleMatchScore);
   }
 
   function editSelectedForm(form: HiringFormDetail) {
+    setActiveBuilderModal(null);
+    const nextScreeningPolicy = normalizeHiringFormScreeningPolicy(form.screeningPolicy);
     setEditingFormId(form.id);
     setTitle(form.title);
     setTeam(form.team);
@@ -330,6 +671,7 @@ export default function PipelineDashboardPage() {
     setMustHaveSkills(form.roleSetup.mustHaveSkills.join("\n"));
     setNiceToHaveSkills(form.roleSetup.niceToHaveSkills.join("\n"));
     setInterviewFocus(form.roleSetup.interviewFocus.join("\n"));
+    clearFormGenerationState();
     setFormFields(
       form.formFields.filter(
         (field) =>
@@ -340,6 +682,15 @@ export default function PipelineDashboardPage() {
     );
     setExpiresAt(form.expiresAt ? toDateInputValue(form.expiresAt) : "");
     setJobDescriptionFile(null);
+    setJobDescriptionDraftText(form.jdAttachment?.text || "");
+    setJobDescriptionDraftName(form.jdAttachment?.fileName || "");
+    setJdGenerationNote(
+      form.jdAttachment
+        ? "The current attached JD is loaded below, so you can review or edit it before saving."
+        : ""
+    );
+    setAutoFilterLowRoleMatch(nextScreeningPolicy.autoFilterLowRoleMatch);
+    setMinimumRoleMatchScore(nextScreeningPolicy.minimumRoleMatchScore);
     setBuilderView("questions");
     setPipelineTab("create");
   }
@@ -490,7 +841,7 @@ export default function PipelineDashboardPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 py-6 sm:py-8 md:py-10">
+    <div className="w-full space-y-6 py-6 sm:py-8 md:py-10">
       <section className="overflow-hidden rounded-xl border border-[var(--workspace-form-border)] bg-white shadow-[0_12px_40px_rgba(103,58,183,0.08)] dark:border-gray-800 dark:bg-gray-900">
         <div className="h-3 bg-[var(--workspace-form-accent)]" />
         <div className="space-y-5 bg-[var(--workspace-form-page)] px-5 py-5 dark:bg-gray-900 sm:px-6 sm:py-6">
@@ -543,9 +894,17 @@ export default function PipelineDashboardPage() {
       ) : null}
 
       {pipelineTab === "create" ? (
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <article className="rounded-xl border border-[var(--workspace-form-border)] bg-[var(--workspace-form-page)] p-4 shadow-[0_8px_30px_rgba(103,58,183,0.06)] dark:border-gray-800 dark:bg-gray-900 sm:p-6">
-            <div className="mx-auto max-w-3xl space-y-4">
+        <section className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-4">
+          <article className="self-start rounded-xl border border-[var(--workspace-form-border)] bg-[var(--workspace-form-page)] p-4 shadow-[0_8px_30px_rgba(103,58,183,0.06)] dark:border-gray-800 dark:bg-gray-900 sm:p-6">
+            <div className="space-y-4">
+              {isBuilderBusy ? (
+                <div className="flex items-start gap-3 rounded-lg border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
+                  <InlineLoader />
+                  <span>{builderBusyMessage}</span>
+                </div>
+              ) : null}
+
               {editingFormId ? (
                 <div className="rounded-lg border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
                   Editing published form. Saving changes updates the same public link.
@@ -567,7 +926,7 @@ export default function PipelineDashboardPage() {
                     placeholder="Form description"
                     className="min-h-16 w-full resize-none border-0 border-b border-[var(--workspace-form-border-soft)] bg-transparent px-0 py-2 text-sm text-[var(--workspace-form-muted)] outline-hidden transition placeholder:text-gray-400 focus:border-[var(--workspace-form-accent)] dark:text-gray-300"
                   />
-                  <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     <input
                       value={team}
                       onChange={(event) => setTeam(event.target.value)}
@@ -580,20 +939,6 @@ export default function PipelineDashboardPage() {
                       onChange={(event) => setExpiresAt(event.target.value)}
                       className={inputClassName}
                     />
-                    <label className={uploadFieldClassName}>
-                      <span className="min-w-0 truncate text-left">
-                        {jobDescriptionFile ? jobDescriptionFile.name : "Attach JD"}
-                      </span>
-                      <input
-                        type="file"
-                        accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.rtf,.log,.png,.jpg,.jpeg,.webp,.gif,.bmp"
-                        className="sr-only"
-                        onChange={(event) => {
-                          const nextFile = event.target.files?.[0] ?? null;
-                          setJobDescriptionFile(nextFile);
-                        }}
-                      />
-                    </label>
                   </div>
                 </div>
               </div>
@@ -602,22 +947,24 @@ export default function PipelineDashboardPage() {
                 <button
                   type="button"
                   onClick={() => setBuilderView("questions")}
+                  disabled={isBuilderBusy}
                   className={`px-5 py-3 text-sm font-medium ${
                     builderView === "questions"
                       ? "border-b-2 border-[var(--workspace-form-accent)] text-[var(--workspace-form-accent)]"
                       : "text-[var(--workspace-form-muted)]"
-                  }`}
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
                 >
                   Questions
                 </button>
                 <button
                   type="button"
                   onClick={() => setBuilderView("templates")}
+                  disabled={isBuilderBusy}
                   className={`px-5 py-3 text-sm font-medium ${
                     builderView === "templates"
                       ? "border-b-2 border-[var(--workspace-form-accent)] text-[var(--workspace-form-accent)]"
                       : "text-[var(--workspace-form-muted)]"
-                  }`}
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
                 >
                   Select template
                 </button>
@@ -638,7 +985,8 @@ export default function PipelineDashboardPage() {
                         key={template.id}
                         type="button"
                         onClick={() => applyTemplate(template.id)}
-                        className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 text-left text-sm font-medium text-[var(--workspace-form-title)] transition hover:border-[var(--workspace-form-accent)] hover:bg-[var(--workspace-form-surface-strong)] dark:border-gray-800 dark:bg-gray-900/70 dark:text-white"
+                        disabled={isBuilderBusy}
+                        className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 text-left text-sm font-medium text-[var(--workspace-form-title)] transition hover:border-[var(--workspace-form-accent)] hover:bg-[var(--workspace-form-surface-strong)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900/70 dark:text-white"
                       >
                         {template.label}
                         <span className="mt-2 block text-xs font-normal leading-5 text-[var(--workspace-form-muted)] dark:text-gray-400">
@@ -693,6 +1041,7 @@ export default function PipelineDashboardPage() {
               <button
                 type="button"
                 onClick={resetBuilder}
+                disabled={isBuilderBusy}
                 className="inline-flex w-full items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5 sm:w-auto"
               >
                 Reset draft
@@ -700,9 +1049,10 @@ export default function PipelineDashboardPage() {
               <button
                 type="button"
                 onClick={handleSaveForm}
-                disabled={!title.trim() || isSubmitting}
-                className="inline-flex w-full items-center justify-center rounded-lg bg-[var(--workspace-form-accent)] px-5 py-3 text-sm font-medium text-[var(--workspace-form-accent-text)] shadow-theme-xs transition hover:bg-[var(--workspace-form-accent-muted)] disabled:cursor-not-allowed disabled:bg-[var(--workspace-form-border)] sm:w-auto"
+                disabled={!title.trim() || isBuilderBusy}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--workspace-form-accent)] px-5 py-3 text-sm font-medium text-[var(--workspace-form-accent-text)] shadow-theme-xs transition hover:bg-[var(--workspace-form-accent-muted)] disabled:cursor-not-allowed disabled:bg-[var(--workspace-form-border)] sm:w-auto"
               >
+                {isSubmitting ? <InlineLoader className="h-4 w-4" /> : null}
                 {isSubmitting
                   ? editingFormId
                     ? "Saving changes..."
@@ -714,8 +1064,29 @@ export default function PipelineDashboardPage() {
             </div>
             </div>
           </article>
+          <section className="rounded-xl border border-[var(--workspace-form-border)] bg-[var(--workspace-form-page)] p-4 shadow-[0_8px_30px_rgba(103,58,183,0.06)] dark:border-gray-800 dark:bg-gray-900 sm:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setActiveBuilderModal("aiForm")}
+                disabled={isSubmitting}
+                className="inline-flex w-full items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-title)] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-100 dark:hover:bg-white/5 sm:w-auto"
+              >
+                Generate form with AI
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveBuilderModal("jobDescription")}
+                disabled={isSubmitting}
+                className="inline-flex w-full items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-title)] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-100 dark:hover:bg-white/5 sm:w-auto"
+              >
+                Generate JD with AI
+              </button>
+            </div>
+          </section>
+          </div>
 
-          <aside className="space-y-5">
+          <aside className="self-start space-y-5">
             <details className="rounded-xl border border-[var(--workspace-form-border)] bg-white p-5 shadow-[0_8px_30px_rgba(103,58,183,0.06)] dark:border-gray-800 dark:bg-gray-900 sm:p-6">
               <summary className="cursor-pointer list-none text-sm font-semibold text-[var(--workspace-form-title)] dark:text-white">
                 Screening settings
@@ -755,6 +1126,71 @@ export default function PipelineDashboardPage() {
                 </Field>
               </div>
             </details>
+
+            <article className="rounded-xl border border-[var(--workspace-form-border)] bg-white p-5 shadow-[0_8px_30px_rgba(103,58,183,0.06)] dark:border-gray-800 dark:bg-gray-900 sm:p-6">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+                  Auto filter
+                </p>
+                <p className="text-sm leading-6 text-[var(--workspace-form-muted)] dark:text-gray-300">
+                  Keep low role-match CVs out of the main review queue automatically while still
+                  allowing recruiters to reveal them when needed.
+                </p>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                <label className="flex items-start gap-3 rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 dark:border-gray-800 dark:bg-gray-950/60">
+                  <input
+                    type="checkbox"
+                    checked={autoFilterLowRoleMatch}
+                    onChange={(event) => setAutoFilterLowRoleMatch(event.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-[var(--workspace-form-border)] text-[var(--workspace-form-accent)]"
+                  />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-medium text-[var(--workspace-form-title)] dark:text-white">
+                      Automatically filter weak role matches
+                    </span>
+                    <span className="block text-xs leading-5 text-[var(--workspace-form-muted)] dark:text-gray-300">
+                      Role-match score is calculated from the benchmark criteria using matched,
+                      partial, and missing signals.
+                    </span>
+                  </span>
+                </label>
+
+                <Field label="Minimum role-match score">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={minimumRoleMatchScore}
+                      onChange={(event) =>
+                        setMinimumRoleMatchScore(
+                          clampInteger(
+                            Number.parseInt(event.target.value || "0", 10),
+                            0,
+                            100,
+                            DEFAULT_HIRING_FORM_SCREENING_POLICY.minimumRoleMatchScore
+                          )
+                        )
+                      }
+                      disabled={!autoFilterLowRoleMatch}
+                      className={inputClassName}
+                    />
+                    <span className="shrink-0 text-sm font-medium text-[var(--workspace-form-muted)] dark:text-gray-300">
+                      / 100
+                    </span>
+                  </div>
+                </Field>
+
+                <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
+                  {autoFilterLowRoleMatch
+                    ? `Candidates below ${minimumRoleMatchScore} will be moved out of the main review queue automatically.`
+                    : "All submitted CVs will stay in the main review queue."}
+                </div>
+              </div>
+            </article>
 
             <details className="rounded-xl border border-[var(--workspace-form-border)] bg-white p-5 shadow-[0_8px_30px_rgba(103,58,183,0.06)] dark:border-gray-800 dark:bg-gray-900 sm:p-6">
               <summary className="cursor-pointer list-none text-sm font-semibold text-[var(--workspace-form-title)] dark:text-white">
@@ -808,7 +1244,7 @@ export default function PipelineDashboardPage() {
 
               <div className="mt-5 space-y-3">
                 {loadState === "loading" ? (
-                  <EmptyMessage text="Loading forms..." />
+                  <PublishedFormsListSkeleton />
                 ) : forms.length === 0 ? (
                   <EmptyMessage text="No published forms yet. Your first form will show here." />
                 ) : (
@@ -838,10 +1274,16 @@ export default function PipelineDashboardPage() {
                         </div>
                         <StatusBadge status={form.status} />
                       </div>
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--workspace-form-muted)] dark:text-gray-400">
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--workspace-form-muted)] dark:text-gray-400">
                         <span>{form.applicationCount} responses</span>
                         <span>/</span>
                         <span>{form.topScore ? `Top score ${form.topScore}` : "No scores yet"}</span>
+                        {selectedFormId === form.id && detailState === "loading" ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 font-medium text-[var(--workspace-form-pill-text)] shadow-[0_1px_2px_rgba(15,23,42,0.08)] dark:bg-gray-950 dark:text-brand-200 dark:shadow-none">
+                            <InlineLoader className="h-3.5 w-3.5" />
+                            Opening
+                          </span>
+                        ) : null}
                       </div>
                     </button>
                   ))
@@ -862,65 +1304,79 @@ export default function PipelineDashboardPage() {
           </aside>
         </section>
       ) : (
-        <section className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-          <aside className="space-y-5">
+        <section className="space-y-6">
+          <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
             <article className="rounded-xl border border-[var(--workspace-form-border)] bg-white p-5 shadow-[var(--workspace-form-shadow-md)] dark:border-gray-800 dark:bg-gray-900 sm:p-6">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6f63a1] dark:text-gray-400">
-                  Submitted forms
-                </p>
-                <p className="text-sm leading-6 text-[#5f6368] dark:text-gray-300">
-                  Choose a form to review its responses, export data, and download applicant CVs.
-                </p>
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6f63a1] dark:text-gray-400">
+                    Submitted forms
+                  </p>
+                  <p className="max-w-3xl text-sm leading-6 text-[#5f6368] dark:text-gray-300">
+                    Choose a form to review its responses, export data, and download applicant CVs.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <MetaTag label={`${forms.length} forms`} />
+                  <MetaTag label={`${totalApplications} submissions`} />
+                </div>
               </div>
 
-              <div className="mt-5 space-y-3">
+              <div className="mt-5">
                 {loadState === "loading" ? (
-                  <EmptyMessage text="Loading forms..." />
+                  <FormsGridSkeleton />
                 ) : forms.length === 0 ? (
                   <div className="space-y-4">
                     <EmptyMessage text="No forms yet. Create one first to start receiving submissions." />
                     <button
                       type="button"
                       onClick={() => setPipelineTab("create")}
-                      className="inline-flex w-full items-center justify-center rounded-lg bg-[var(--workspace-form-accent)] px-4 py-3 text-sm font-medium text-[var(--workspace-form-accent-text)] shadow-theme-xs transition hover:bg-[var(--workspace-form-accent-muted)]"
+                      className="inline-flex w-full items-center justify-center rounded-lg bg-[var(--workspace-form-accent)] px-4 py-3 text-sm font-medium text-[var(--workspace-form-accent-text)] shadow-theme-xs transition hover:bg-[var(--workspace-form-accent-muted)] sm:w-auto"
                     >
                       Create form
                     </button>
                   </div>
                 ) : (
-                  forms.map((form) => (
-                    <button
-                      key={form.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedFormId(form.id);
-                        setSelectedApplicationId("");
-                      }}
-                      className={`w-full rounded-lg border px-4 py-4 text-left transition ${
-                        selectedFormId === form.id
-                          ? "border-[var(--workspace-form-border)] bg-[var(--workspace-form-pill-bg)] dark:border-brand-500/30 dark:bg-brand-500/10"
-                          : "border-[var(--workspace-form-border-soft)] bg-white hover:border-[var(--workspace-form-border)] hover:bg-[var(--workspace-form-surface)] dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700 dark:hover:bg-gray-900/80"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="break-words text-sm font-semibold text-[#1f1b2d] dark:text-white">
-                            {form.title}
-                          </p>
-                          <p className="mt-1 text-xs text-[#6f63a1] dark:text-gray-400">
-                            {form.team || "General hiring"}
-                          </p>
+                  <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                    {forms.map((form) => (
+                      <button
+                        key={form.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedFormId(form.id);
+                          setSelectedApplicationId("");
+                        }}
+                        className={`w-full rounded-xl border px-4 py-4 text-left transition ${
+                          selectedFormId === form.id
+                            ? "border-[var(--workspace-form-border)] bg-[var(--workspace-form-pill-bg)] shadow-[0_10px_24px_rgba(15,23,42,0.08)] dark:border-brand-500/30 dark:bg-brand-500/10"
+                            : "border-[var(--workspace-form-border-soft)] bg-white hover:border-[var(--workspace-form-border)] hover:bg-[var(--workspace-form-surface)] hover:shadow-[0_10px_24px_rgba(15,23,42,0.06)] dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700 dark:hover:bg-gray-900/80"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="break-words text-sm font-semibold text-[#1f1b2d] dark:text-white">
+                              {form.title}
+                            </p>
+                            <p className="mt-1 text-xs text-[#6f63a1] dark:text-gray-400">
+                              {form.team || "General hiring"}
+                            </p>
+                          </div>
+                          <StatusBadge status={form.status} />
                         </div>
-                        <StatusBadge status={form.status} />
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-[#5f6368] dark:text-gray-400">
-                        <span>{form.applicationCount} responses</span>
-                        <span>/</span>
-                        <span>{form.topScore ? `Top score ${form.topScore}` : "No scores yet"}</span>
-                      </div>
-                    </button>
-                  ))
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#5f6368] dark:text-gray-400">
+                          <span>{form.applicationCount} responses</span>
+                          <span>/</span>
+                          <span>{form.topScore ? `Top score ${form.topScore}` : "No scores yet"}</span>
+                          {selectedFormId === form.id && detailState === "loading" ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 font-medium text-[var(--workspace-form-pill-text)] shadow-[0_1px_2px_rgba(15,23,42,0.08)] dark:bg-gray-950 dark:text-brand-200 dark:shadow-none">
+                              <InlineLoader className="h-3.5 w-3.5" />
+                              Loading
+                            </span>
+                          ) : null}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             </article>
@@ -932,9 +1388,10 @@ export default function PipelineDashboardPage() {
               <div className="mt-4 space-y-3 text-sm leading-6 text-[#5f6368] dark:text-gray-300">
                 <p>Export spreadsheet-ready CSV data from the selected form.</p>
                 <p>Open any applicant to download the original CV and review AI screening notes.</p>
+                <p>Use the response list below to jump between candidates quickly.</p>
               </div>
             </article>
-          </aside>
+          </div>
 
           <div className="space-y-6">
             {selectedForm ? (
@@ -979,7 +1436,8 @@ export default function PipelineDashboardPage() {
                         <button
                           type="button"
                           onClick={() => editSelectedForm(selectedForm)}
-                          className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-2.5 text-sm font-medium text-[#5f6368] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+                          disabled={detailState === "loading"}
+                          className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-2.5 text-sm font-medium text-[#5f6368] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
                         >
                           Edit form
                         </button>
@@ -987,8 +1445,9 @@ export default function PipelineDashboardPage() {
                           type="button"
                           onClick={() => void toggleSelectedFormPublished(selectedForm)}
                           disabled={isPublishingToggle}
-                          className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-2.5 text-sm font-medium text-[#5f6368] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-2.5 text-sm font-medium text-[#5f6368] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
                         >
+                          {isPublishingToggle ? <InlineLoader className="h-4 w-4" /> : null}
                           {isPublishingToggle
                             ? "Updating..."
                             : selectedForm.status === "unpublished"
@@ -997,40 +1456,61 @@ export default function PipelineDashboardPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={async () => {
-                            await navigator.clipboard.writeText(selectedForm.publicUrl);
-                          }}
-                          className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-2.5 text-sm font-medium text-[#5f6368] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+                          onClick={() => void handleCopyPublicLink(selectedForm.publicUrl)}
+                          disabled={copyLinkState === "copying"}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-2.5 text-sm font-medium text-[#5f6368] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
                         >
-                          Copy link
-                        </button>
-                        <a
-                          href={appendWorkspaceQuery(
-                            `/api/forms/${selectedForm.id}?export=csv`,
-                            settings.workspaceId
+                          {copyLinkState === "copying" ? (
+                            <>
+                              <InlineLoader className="h-4 w-4" />
+                              Copying...
+                            </>
+                          ) : copyLinkState === "copied" ? (
+                            "Copied"
+                          ) : (
+                            "Copy link"
                           )}
-                          className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-2.5 text-sm font-medium text-[#5f6368] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleExportResponses(selectedForm.id)}
+                          disabled={isPreparingExport}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-2.5 text-sm font-medium text-[#5f6368] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
                         >
-                          Export CSV
-                        </a>
+                          {isPreparingExport ? (
+                            <>
+                              <InlineLoader className="h-4 w-4" />
+                              Preparing CSV...
+                            </>
+                          ) : (
+                            "Export CSV"
+                          )}
+                        </button>
                         <button
                           type="button"
                           onClick={() => void handleDeleteForm(selectedForm.id)}
                           disabled={isDeleting === selectedForm.id}
-                          className="col-span-2 inline-flex items-center justify-center rounded-lg border border-[#f1b7b1] bg-white px-4 py-2.5 text-sm font-medium text-[#a50e0e] transition hover:bg-[#fce8e6] disabled:cursor-not-allowed dark:border-error-500/30 dark:bg-transparent dark:text-error-200 dark:hover:bg-error-500/10 sm:col-span-1"
+                          className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg border border-[#f1b7b1] bg-white px-4 py-2.5 text-sm font-medium text-[#a50e0e] transition hover:bg-[#fce8e6] disabled:cursor-not-allowed dark:border-error-500/30 dark:bg-transparent dark:text-error-200 dark:hover:bg-error-500/10 sm:col-span-1"
                         >
+                          {isDeleting === selectedForm.id ? (
+                            <InlineLoader className="h-4 w-4" />
+                          ) : null}
                           {isDeleting === selectedForm.id ? "Deleting..." : "Delete"}
                         </button>
                       </div>
                     </div>
 
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                       <ReviewStat label="Responses" value={String(selectedForm.applicationCount)} />
                       <ReviewStat
                         label="Top score"
                         value={selectedForm.topScore ? String(selectedForm.topScore) : "-"}
                       />
                       <ReviewStat label="Questions" value={String(selectedForm.formFields.length)} />
+                      <ReviewStat
+                        label="Auto-filtered"
+                        value={String(filteredOutApplications.length)}
+                      />
                       <ReviewStat
                         label="JD"
                         value={selectedForm.jdAttachment ? "Attached" : "None"}
@@ -1068,6 +1548,17 @@ export default function PipelineDashboardPage() {
                           ) : null}
                         </div>
                       ) : null}
+
+                      <div className="rounded-lg border border-[var(--workspace-form-border-soft)] bg-white p-4 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+                          Queue policy
+                        </p>
+                        <p className="mt-2">
+                          {selectedFormScreeningPolicy.autoFilterLowRoleMatch
+                            ? `CVs below role-match score ${selectedFormScreeningPolicy.minimumRoleMatchScore} are filtered out of the primary review queue automatically.`
+                            : "Automatic low role-match filtering is turned off for this form."}
+                        </p>
+                      </div>
 
                       <div className="grid gap-3 sm:grid-cols-2">
                         <CompactSkillList
@@ -1130,44 +1621,98 @@ export default function PipelineDashboardPage() {
                   </div>
                   {detailState === "loading" ? (
                     <div className="p-5 sm:p-6">
-                      <EmptyMessage text="Loading responses..." />
+                      <ResponsesSectionSkeleton />
                     </div>
-                  ) : selectedForm.applications.length === 0 ? (
+                  ) : visibleApplications.length === 0 && filteredOutApplications.length === 0 ? (
                     <div className="p-5 sm:p-6">
                       <EmptyMessage text="No applications yet for this form." />
                     </div>
                   ) : (
-                    <div className="grid min-h-[560px] lg:grid-cols-[320px_minmax(0,1fr)]">
-                      <div className="border-b border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 dark:border-gray-800 dark:bg-gray-950/40 lg:border-b-0 lg:border-r">
-                        <div className="space-y-3">
-                          {selectedForm.applications.map((application) => (
-                            <CandidateListItem
-                              key={application.id}
-                              application={application}
-                              isActive={selectedApplicationId === application.id}
-                              onClick={() => setSelectedApplicationId(application.id)}
-                            />
-                          ))}
+                    <div className="space-y-6 p-5 sm:p-6">
+                      <div className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 shadow-[var(--workspace-form-shadow-sm)] dark:border-gray-800 dark:bg-gray-950/40">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+                              Response list
+                            </p>
+                            <p className="mt-1 text-sm leading-6 text-[var(--workspace-form-muted)] dark:text-gray-300">
+                              {selectedApplication
+                                ? `Showing ${getApplicationDisplayName(selectedApplication)}`
+                                : visibleApplications.length > 0
+                                  ? "Choose a response to open the full review."
+                                  : "All submissions are currently outside the primary review queue."}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--workspace-form-pill-text)] shadow-[0_1px_2px_rgba(15,23,42,0.08)] dark:bg-gray-900 dark:text-brand-200 dark:shadow-none">
+                              {visibleApplications.length} in queue
+                            </span>
+                            {filteredOutApplications.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setShowFilteredApplications((current) => !current)
+                                }
+                                className="rounded-full border border-[var(--workspace-form-border-soft)] bg-white px-3 py-1 text-xs font-semibold text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                              >
+                                {showFilteredApplications
+                                  ? "Hide filtered-out CVs"
+                                  : `Show ${filteredOutApplications.length} filtered-out CVs`}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
+
+                        {selectedFormScreeningPolicy.autoFilterLowRoleMatch ? (
+                          <div className="mt-4 rounded-xl border border-[var(--workspace-form-border-soft)] bg-white px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+                            The primary queue hides CVs below role-match score{" "}
+                            <span className="font-semibold text-[var(--workspace-form-title)] dark:text-white">
+                              {selectedFormScreeningPolicy.minimumRoleMatchScore}
+                            </span>
+                            . Recruiters can reveal them for audit or edge-case review.
+                          </div>
+                        ) : null}
+
+                        {visibleApplications.length > 0 ? (
+                          <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                            {visibleApplications.map((application) => (
+                              <CandidateListItem
+                                key={application.id}
+                                application={application}
+                                filterResult={applicationFilterResults.get(application.id)}
+                                isActive={selectedApplication?.id === application.id}
+                                onClick={() => setSelectedApplicationId(application.id)}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-4 rounded-xl border border-dashed border-[var(--workspace-form-border)] bg-white px-4 py-6 text-sm text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+                            {filteredOutApplications.length > 0
+                              ? `All ${filteredOutApplications.length} submissions were filtered below the current role-match threshold. Use the button above to review them.`
+                              : "No submissions are in this queue yet."}
+                          </div>
+                        )}
                       </div>
-                      <div className="p-4 sm:p-6">
-                      {selectedApplication ? (
-                        <ApplicationReviewCard
-                          application={selectedApplication}
-                          isDeleting={isDeleting === selectedApplication.id}
-                          onDelete={() => void handleDeleteApplication(selectedApplication.id)}
-                          questions={selectedForm.formFields}
-                        />
-                      ) : (
-                        <EmptyMessage text="Select a response to open the full candidate review." />
-                      )}
+
+                      <div className="min-w-0">
+                        {selectedApplication ? (
+                          <ApplicationReviewCard
+                            application={selectedApplication}
+                            filterResult={applicationFilterResults.get(selectedApplication.id)}
+                            isDeleting={isDeleting === selectedApplication.id}
+                            onDelete={() => void handleDeleteApplication(selectedApplication.id)}
+                            questions={selectedForm.formFields}
+                          />
+                        ) : (
+                          <EmptyMessage text="Select a response to open the full candidate review." />
+                        )}
                       </div>
                     </div>
                   )}
                 </section>
               </>
             ) : detailState === "loading" ? (
-              <EmptyMessage text="Loading selected form..." />
+              <ReviewWorkspaceSkeleton />
             ) : (
               <div className="rounded-xl border border-[var(--workspace-form-border)] bg-white p-6 shadow-[var(--workspace-form-shadow-md)] dark:border-gray-800 dark:bg-gray-900">
                 <EmptyMessage text="Select a form to review its submissions and export responses." />
@@ -1176,22 +1721,288 @@ export default function PipelineDashboardPage() {
           </div>
         </section>
       )}
+
+      {activeBuilderModal === "aiForm" ? (
+        <BuilderToolModal
+          eyebrow="AI form draft"
+          title="Generate the form instead of building it by hand"
+          description="Use the role title, hiring brief, skill requirements, and an optional instruction to create an editable application form draft."
+          onClose={() => setActiveBuilderModal(null)}
+          maxWidthClassName="max-w-4xl"
+        >
+          <div className="space-y-5">
+            <textarea
+              value={aiFormPrompt}
+              onChange={(event) => setAiFormPrompt(event.target.value)}
+              placeholder="Optional instruction: Keep this short and technical, focus on project proof, and ask for availability."
+              className={`${inputClassName} min-h-40`}
+            />
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
+                {formFields.length > 0
+                  ? `The builder currently has ${formFields.length} editable field${formFields.length === 1 ? "" : "s"}. Generating a new draft will replace them.`
+                  : "The generated draft will load directly into the builder so you can review, edit, and publish it."}
+              </div>
+              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
+                {canGenerateFormDraft
+                  ? "AI uses your current role context first, then fills the rest with Gemini, Hugging Face, or the local fallback generator."
+                  : "Add a role title, brief, skill list, or a short instruction to unlock AI form generation."}
+              </div>
+            </div>
+
+            {formGenerationNote ? (
+              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-white px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+                {formGenerationNote}
+              </div>
+            ) : null}
+
+            <div className="flex flex-col gap-3 border-t border-[var(--workspace-form-border-soft)] pt-5 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="button"
+                onClick={() => setActiveBuilderModal(null)}
+                className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+              >
+                Done
+              </button>
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+                {aiFormPrompt.trim() || formGenerationNote ? (
+                  <button
+                    type="button"
+                    onClick={clearFormGenerationState}
+                    disabled={isGeneratingFormDraft}
+                    className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+                  >
+                    Clear AI draft notes
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => void handleGenerateFormDraft()}
+                  disabled={isGeneratingFormDraft || !canGenerateFormDraft}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--workspace-form-accent)] px-4 py-3 text-sm font-medium text-[var(--workspace-form-accent-text)] shadow-theme-xs transition hover:bg-[var(--workspace-form-accent-muted)] disabled:cursor-not-allowed disabled:bg-[var(--workspace-form-border)]"
+                >
+                  {isGeneratingFormDraft ? <InlineLoader className="h-4 w-4" /> : null}
+                  {isGeneratingFormDraft ? "Generating form..." : "Generate form with AI"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </BuilderToolModal>
+      ) : null}
+
+      {activeBuilderModal === "jobDescription" ? (
+        <BuilderToolModal
+          eyebrow="Job description"
+          title="Attach a JD or generate one automatically"
+          description="Use a real file, or create an editable JD draft from the role brief and screening criteria before you publish this form."
+          onClose={() => setActiveBuilderModal(null)}
+          maxWidthClassName="max-w-5xl"
+        >
+          <div className="space-y-6">
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+              <div className="space-y-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-[var(--workspace-form-title)] dark:text-white">
+                      JD content
+                    </p>
+                    <p className="text-sm leading-6 text-[var(--workspace-form-muted)] dark:text-gray-300">
+                      Review the source that will be reused during public applications and CV screening.
+                    </p>
+                  </div>
+                  {jobDescriptionDraftLength > 0 ? (
+                    <span className="inline-flex w-fit items-center rounded-full bg-[var(--workspace-form-pill-bg)] px-3 py-1 text-xs font-semibold text-[var(--workspace-form-pill-text)] dark:bg-brand-500/10 dark:text-brand-200">
+                      {jobDescriptionDraftLength} characters
+                    </span>
+                  ) : null}
+                </div>
+
+                {jobDescriptionFile ? (
+                  <div className="min-h-[22rem] rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-5 dark:border-gray-800 dark:bg-gray-900/70">
+                    <p className="text-sm font-semibold text-[var(--workspace-form-title)] dark:text-white">
+                      Uploaded JD ready
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-[var(--workspace-form-muted)] dark:text-gray-300">
+                      <span className="font-medium text-[var(--workspace-form-title)] dark:text-white">
+                        {jobDescriptionFile.name}
+                      </span>{" "}
+                      will be extracted and used for candidate screening. Clear the upload if you
+                      want to switch back to the editable text draft.
+                    </p>
+                  </div>
+                ) : (
+                  <textarea
+                    value={jobDescriptionDraftText}
+                    onChange={(event) => setJobDescriptionDraftText(event.target.value)}
+                    placeholder="Generate a JD here or paste your own text. This draft will be saved and reused during CV screening."
+                    className={`${inputClassName} min-h-[22rem]`}
+                  />
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <label
+                  className={`${uploadFieldClassName} ${
+                    isGeneratingJd ? "pointer-events-none opacity-60" : ""
+                  }`}
+                >
+                  <span className="min-w-0 truncate text-left">
+                    {jobDescriptionFile ? jobDescriptionFile.name : "Upload JD file"}
+                  </span>
+                  <input
+                    type="file"
+                    accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.rtf,.log,.png,.jpg,.jpeg,.webp,.gif,.bmp"
+                    className="sr-only"
+                    onChange={(event) => {
+                      const nextFile = event.target.files?.[0] ?? null;
+                      setJobDescriptionFile(nextFile);
+                      if (nextFile) {
+                        setJobDescriptionDraftText("");
+                        setJobDescriptionDraftName(nextFile.name);
+                        setJdGenerationNote(
+                          "Uploaded JD files override the editable draft when you save this form."
+                        );
+                      }
+                    }}
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => void handleGenerateJobDescription()}
+                  disabled={isGeneratingJd || !canGenerateJobDescription}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--workspace-form-accent)] px-4 py-3 text-sm font-medium text-[var(--workspace-form-accent-text)] shadow-theme-xs transition hover:bg-[var(--workspace-form-accent-muted)] disabled:cursor-not-allowed disabled:bg-[var(--workspace-form-border)]"
+                >
+                  {isGeneratingJd ? <InlineLoader className="h-4 w-4" /> : null}
+                  {isGeneratingJd ? "Generating JD..." : "Generate JD automatically"}
+                </button>
+
+                {jobDescriptionFile || jobDescriptionDraftLength > 0 ? (
+                  <button
+                    type="button"
+                    onClick={clearJobDescriptionState}
+                    disabled={isGeneratingJd}
+                    className="inline-flex w-full items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+                  >
+                    Clear JD
+                  </button>
+                ) : null}
+
+                <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
+                  {jobDescriptionFile
+                    ? "The uploaded file will be used as the JD source when this form is published or updated."
+                    : jobDescriptionDraftLength > 0
+                      ? "This editable draft will be saved as the JD source for public applications and CV screening."
+                      : "No JD attached yet. Generate one from the role brief or upload a file from your team."}
+                </div>
+
+                {jdGenerationNote ? (
+                  <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-white px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+                    {jdGenerationNote}
+                  </div>
+                ) : null}
+
+                {!canGenerateJobDescription ? (
+                  <p className="text-xs leading-5 text-[var(--workspace-form-muted)] dark:text-gray-400">
+                    Add at least a role title, brief, or key skills in the screening settings to
+                    unlock automatic JD generation.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-[var(--workspace-form-border-soft)] pt-5 dark:border-gray-800">
+              <button
+                type="button"
+                onClick={() => setActiveBuilderModal(null)}
+                className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </BuilderToolModal>
+      ) : null}
+    </div>
+  );
+}
+
+function BuilderToolModal({
+  eyebrow,
+  title,
+  description,
+  onClose,
+  children,
+  maxWidthClassName = "max-w-4xl",
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  onClose: () => void;
+  children: ReactNode;
+  maxWidthClassName?: string;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+        className={`w-full ${maxWidthClassName} max-h-[calc(100vh-3rem)] overflow-hidden rounded-2xl border border-[var(--workspace-form-border)] bg-[var(--workspace-form-page)] shadow-[0_28px_100px_rgba(0,0,0,0.45)] dark:border-gray-800 dark:bg-gray-950`}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--workspace-form-border-soft)] p-5 dark:border-gray-800 sm:p-6">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+              {eyebrow}
+            </p>
+            <div className="space-y-1">
+              <h2 className="text-2xl font-semibold tracking-tight text-[var(--workspace-form-title)] dark:text-white">
+                {title}
+              </h2>
+              <p className="max-w-3xl text-sm leading-6 text-[var(--workspace-form-muted)] dark:text-gray-300">
+                {description}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="max-h-[calc(100vh-12rem)] overflow-y-auto p-5 sm:p-6">{children}</div>
+      </div>
     </div>
   );
 }
 
 function ApplicationReviewCard({
   application,
+  filterResult,
   isDeleting,
   onDelete,
   questions,
 }: {
   application: HiringApplicationRecord;
+  filterResult?: ReturnType<typeof evaluateHiringApplicationFilter>;
   isDeleting: boolean;
   onDelete: () => void;
   questions: HiringFormDetail["formFields"];
 }) {
   const { settings } = useWorkspace();
+  const displayName = getApplicationDisplayName(application);
+  const profileHeadline =
+    application.analysis.result.candidateProfile.headline ||
+    application.analysis.result.recommendation.summary;
   const profileDetails = [
     ["Email", application.applicant.email],
     ["Phone", application.applicant.phone],
@@ -1205,34 +2016,58 @@ function ApplicationReviewCard({
   ];
 
   return (
-    <article className="space-y-5">
-      <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
-              Candidate review
-            </p>
-            <h3 className="mt-2 break-words text-2xl font-semibold text-[var(--workspace-form-title)] dark:text-white">
-              {application.analysis.result.candidateProfile.name ||
-                application.applicant.fullName ||
-                application.resumeFile.fileName}
-            </h3>
-            <p className="mt-2 text-sm text-[var(--workspace-form-muted)] dark:text-gray-300">
-              Submitted {new Date(application.createdAt).toLocaleString()} /{" "}
-              {application.analysis.meta.inputKind}
-            </p>
+    <article className="space-y-6">
+      <section className="overflow-hidden rounded-2xl border border-[var(--workspace-form-border-soft)] bg-white p-6 shadow-[var(--workspace-form-shadow-md)] dark:border-gray-800 dark:bg-gray-900">
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-6 2xl:flex-row 2xl:items-start 2xl:justify-between">
+            <div className="flex min-w-0 items-start gap-4">
+              <div className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-[var(--workspace-form-accent-soft)] text-lg font-semibold text-[var(--workspace-form-accent)] dark:bg-brand-500/15 dark:text-brand-200">
+                {getInitials(displayName)}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+                  Candidate review
+                </p>
+                <h3 className="mt-2 break-words text-3xl font-semibold tracking-tight text-[var(--workspace-form-title)] dark:text-white">
+                  {displayName}
+                </h3>
+                {profileHeadline ? (
+                  <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--workspace-form-muted)] dark:text-gray-300">
+                    {profileHeadline}
+                  </p>
+                ) : null}
+                <p className="mt-3 text-sm text-[var(--workspace-form-muted)] dark:text-gray-300">
+                  Submitted {formatApplicationDate(application.createdAt)}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 2xl:w-[360px]">
+              <ReviewMetricCard
+                label="Decision"
+                value={application.analysis.result.recommendation.decision}
+              />
+              <ReviewMetricCard
+                label="Score"
+                value={String(application.analysis.result.score.value)}
+              />
+              <ReviewMetricCard
+                label="Source"
+                value={application.analysis.meta.inputKind.toUpperCase()}
+              />
+            </div>
           </div>
+
           <div className="flex flex-wrap gap-2">
-            <span className="rounded-lg bg-[var(--workspace-form-pill-bg)] px-3 py-2 text-sm font-semibold text-[var(--workspace-form-pill-text)] dark:bg-brand-500/15 dark:text-brand-200">
-              {application.analysis.result.recommendation.decision}
-            </span>
-            <span className="rounded-lg bg-[var(--workspace-form-pill-bg)] px-3 py-2 text-sm font-semibold text-[var(--workspace-form-pill-text)] dark:bg-brand-500/15 dark:text-brand-200">
-              Score {application.analysis.result.score.value}
-            </span>
+            <MetaTag label={application.analysis.result.recommendation.confidence} />
+            <MetaTag label={application.resumeFile.fileName} />
+            {filterResult?.autoFiltered ? (
+              <MetaTag label={`Filtered out at ${filterResult.roleMatchScore}/100`} />
+            ) : null}
           </div>
         </div>
 
-        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <a
             href={appendWorkspaceQuery(
               `/api/applications/${application.id}`,
@@ -1240,115 +2075,174 @@ function ApplicationReviewCard({
             )}
             className="inline-flex items-center justify-center rounded-lg bg-[var(--workspace-form-accent)] px-4 py-2.5 text-sm font-medium text-[var(--workspace-form-accent-text)] shadow-theme-xs transition hover:bg-[var(--workspace-form-accent-muted)]"
           >
-            Download CV
+            Download resume
           </a>
           <button
             type="button"
             onClick={onDelete}
             disabled={isDeleting}
-            className="inline-flex items-center justify-center rounded-lg border border-[#f1b7b1] px-4 py-2.5 text-sm font-medium text-[#a50e0e] transition hover:bg-[#fce8e6] disabled:cursor-not-allowed dark:border-error-500/30 dark:text-error-200 dark:hover:bg-error-500/10"
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#f1b7b1] px-4 py-2.5 text-sm font-medium text-[#a50e0e] transition hover:bg-[#fce8e6] disabled:cursor-not-allowed dark:border-error-500/30 dark:text-error-200 dark:hover:bg-error-500/10"
           >
-            {isDeleting ? "Deleting..." : "Delete response"}
+            {isDeleting ? <InlineLoader className="h-4 w-4" /> : null}
+            {isDeleting ? "Deleting..." : "Delete submission"}
           </button>
         </div>
-      </div>
 
-      <div className="grid gap-4 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)]">
-        <section className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
-            Applicant details
-          </p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-1">
+        {filterResult?.autoFiltered ? (
+          <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+            <span className="font-semibold">Auto-filtered from the main queue.</span>{" "}
+            {filterResult.reason}
+          </div>
+        ) : null}
+      </section>
+
+      <div className="grid gap-6 2xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+        <section className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-white p-5 shadow-[var(--workspace-form-shadow-sm)] dark:border-gray-800 dark:bg-gray-900">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+              Applicant details
+            </p>
+            <span className="text-xs font-medium text-[var(--workspace-form-muted)] dark:text-gray-400">
+              {application.applicant.email ? "Primary contact captured" : "Limited contact info"}
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
             {profileDetails.map(([label, value]) => (
-              <DetailRow key={label} label={label} value={value} />
+              <ProfileDetailCard key={label} label={label} value={value} />
             ))}
           </div>
         </section>
 
-        <section className="space-y-5 rounded-xl border border-[var(--workspace-form-border-soft)] bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <section className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-white p-5 shadow-[var(--workspace-form-shadow-sm)] dark:border-gray-800 dark:bg-gray-900">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
               AI summary
             </p>
-            <p className="mt-3 rounded-lg bg-[var(--workspace-form-surface)] p-4 text-sm leading-7 text-[var(--workspace-form-muted)] dark:bg-gray-950/60 dark:text-gray-300">
+            <p className="mt-3 rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-5 text-sm leading-7 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
               {application.analysis.result.summary}
             </p>
           </div>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <SignalPanel
-              title="Highlights"
-              items={application.analysis.result.keyHighlights}
-            tone="positive"
-          />
-          <SignalPanel
-            title="Red flags"
-            items={application.analysis.result.redFlags}
-              tone="caution"
-            />
+          <div className="mt-5 rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 dark:border-gray-800 dark:bg-gray-950/60">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+              Recommendation
+            </p>
+            <p className="mt-2 text-sm leading-7 text-[var(--workspace-form-muted)] dark:text-gray-300">
+              {application.analysis.result.recommendation.summary}
+            </p>
           </div>
-
-          {Object.keys(application.applicant.customAnswers).length > 0 ? (
-            <div className="rounded-lg border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 dark:border-gray-800 dark:bg-gray-950/60">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
-                Screening answers
-              </p>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                {Object.entries(application.applicant.customAnswers).map(([label, answer]) => (
-                  <div key={label} className="rounded-lg bg-white p-4 dark:bg-gray-900">
-                    <p className="text-sm font-medium text-[var(--workspace-form-title)] dark:text-white">
-                      {questions.find((item) => item.id === label)?.label || label}
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-[var(--workspace-form-muted)] dark:text-gray-300">
-                      {answer || "-"}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </section>
       </div>
+
+      <div className="grid gap-4 2xl:grid-cols-2">
+        <SignalPanel
+          title="Highlights"
+          items={application.analysis.result.keyHighlights}
+          tone="positive"
+        />
+        <SignalPanel
+          title="Red flags"
+          items={application.analysis.result.redFlags}
+          tone="caution"
+        />
+      </div>
+
+      {Object.keys(application.applicant.customAnswers).length > 0 ? (
+        <section className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-white p-5 shadow-[var(--workspace-form-shadow-sm)] dark:border-gray-800 dark:bg-gray-900">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+              Screening answers
+            </p>
+            <span className="text-xs font-medium text-[var(--workspace-form-muted)] dark:text-gray-400">
+              {Object.keys(application.applicant.customAnswers).length} responses
+            </span>
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            {Object.entries(application.applicant.customAnswers).map(([label, answer]) => (
+              <div
+                key={label}
+                className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 dark:border-gray-800 dark:bg-gray-950/60"
+              >
+                <p className="text-sm font-medium leading-7 text-[var(--workspace-form-title)] dark:text-white">
+                  {questions.find((item) => item.id === label)?.label || label}
+                </p>
+                <p className="mt-2 text-sm leading-7 text-[var(--workspace-form-muted)] dark:text-gray-300">
+                  {answer || "-"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </article>
   );
 }
 
 function CandidateListItem({
   application,
+  filterResult,
   isActive,
   onClick,
 }: {
   application: HiringApplicationRecord;
+  filterResult?: ReturnType<typeof evaluateHiringApplicationFilter>;
   isActive: boolean;
   onClick: () => void;
 }) {
+  const displayName = getApplicationDisplayName(application);
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`w-full rounded-xl border p-4 text-left transition ${
+      className={`w-full rounded-2xl border p-4 text-left transition ${
         isActive
-          ? "border-[var(--workspace-form-accent)] bg-white shadow-[0_8px_24px_rgba(103,58,183,0.10)] dark:bg-gray-900"
-          : "border-[var(--workspace-form-border-soft)] bg-white/70 hover:border-[var(--workspace-form-border)] hover:bg-white dark:border-gray-800 dark:bg-gray-900/60 dark:hover:bg-gray-900"
+          ? "border-[var(--workspace-form-accent)] bg-white shadow-[0_18px_36px_rgba(15,23,42,0.12)] dark:bg-gray-900"
+          : "border-[var(--workspace-form-border-soft)] bg-white/70 hover:border-[var(--workspace-form-border)] hover:bg-white hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)] dark:border-gray-800 dark:bg-gray-900/60 dark:hover:bg-gray-900"
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-[var(--workspace-form-title)] dark:text-white">
-            {application.applicant.fullName || application.resumeFile.fileName}
-          </p>
-          <p className="mt-1 truncate text-xs text-[var(--workspace-form-muted)] dark:text-gray-400">
-            {application.applicant.email || "No email"}
+      <div className="flex items-start gap-3">
+        <div
+          className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-sm font-semibold ${
+            isActive
+              ? "bg-[var(--workspace-form-accent-soft)] text-[var(--workspace-form-accent)] dark:bg-brand-500/15 dark:text-brand-200"
+              : "bg-[var(--workspace-form-surface)] text-[var(--workspace-form-muted)] dark:bg-gray-950/60 dark:text-gray-300"
+          }`}
+        >
+          {getInitials(displayName)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-[var(--workspace-form-title)] dark:text-white">
+                {displayName}
+              </p>
+              <p className="mt-1 truncate text-xs text-[var(--workspace-form-muted)] dark:text-gray-400">
+                {application.applicant.email || "No email added"}
+              </p>
+            </div>
+            <span className="shrink-0 rounded-xl bg-[var(--workspace-form-pill-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--workspace-form-pill-text)] dark:bg-brand-500/15 dark:text-brand-200">
+              {application.analysis.result.score.value}
+            </span>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <span className="rounded-full bg-[var(--workspace-form-surface)] px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--workspace-form-muted)] dark:bg-gray-950/60 dark:text-gray-300">
+              {application.analysis.result.recommendation.decision}
+            </span>
+            <span className="rounded-full bg-[var(--workspace-form-surface)] px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--workspace-form-muted)] dark:bg-gray-950/60 dark:text-gray-300">
+              {application.analysis.meta.inputKind}
+            </span>
+            {filterResult?.autoFiltered ? (
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-amber-800 dark:bg-amber-500/10 dark:text-amber-100">
+                Filtered {filterResult.roleMatchScore}
+              </span>
+            ) : null}
+          </div>
+
+          <p className="mt-3 text-xs text-[var(--workspace-form-muted)] dark:text-gray-400">
+            {formatApplicationDate(application.createdAt)}
           </p>
         </div>
-        <span className="shrink-0 rounded-md bg-[var(--workspace-form-pill-bg)] px-2.5 py-1 text-xs font-semibold text-[var(--workspace-form-pill-text)] dark:bg-brand-500/15 dark:text-brand-200">
-          {application.analysis.result.score.value}
-        </span>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--workspace-form-muted)] dark:text-gray-400">
-        <span>{application.analysis.result.recommendation.decision}</span>
-        <span>/</span>
-        <span>{application.analysis.meta.inputKind}</span>
       </div>
     </button>
   );
@@ -1386,6 +2280,32 @@ function ReviewStat({ label, value }: { label: string; value: string }) {
       </p>
       <p className="mt-2 text-2xl font-semibold text-[var(--workspace-form-title)] dark:text-white">
         {value}
+      </p>
+    </div>
+  );
+}
+
+function ReviewMetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 dark:border-gray-800 dark:bg-gray-950/60">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+        {label}
+      </p>
+      <p className="mt-2 break-words text-base font-semibold text-[var(--workspace-form-title)] dark:text-white">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ProfileDetailCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 dark:border-gray-800 dark:bg-gray-950/60">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+        {label}
+      </p>
+      <p className="mt-2 break-all text-sm leading-7 text-[var(--workspace-form-title)] dark:text-white">
+        {value || "-"}
       </p>
     </div>
   );
@@ -1653,25 +2573,42 @@ function SignalPanel({
   items: string[];
   tone: "positive" | "caution";
 }) {
+  const styles = {
+    positive: {
+      item:
+        "border-emerald-100 bg-emerald-50/80 text-emerald-900 dark:border-emerald-500/20 dark:bg-emerald-500/[0.10] dark:text-emerald-50",
+      dot: "bg-emerald-600/80 dark:bg-emerald-400",
+    },
+    caution: {
+      item:
+        "border-amber-100 bg-amber-50/85 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/[0.10] dark:text-amber-50",
+      dot: "bg-amber-600/80 dark:bg-amber-400",
+    },
+  }[tone];
+
   return (
-    <div className="rounded-lg border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 dark:border-gray-800 dark:bg-gray-900/70">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
-        {title}
-      </p>
-      <div className="mt-3 space-y-2">
+    <div className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-white p-5 shadow-[var(--workspace-form-shadow-sm)] dark:border-gray-800 dark:bg-gray-900">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+          {title}
+        </p>
+        <span className="text-xs font-medium text-[var(--workspace-form-muted)] dark:text-gray-400">
+          {items.length}
+        </span>
+      </div>
+      <div className="mt-4 space-y-3">
         {items.length === 0 ? (
-          <p className="text-sm text-[var(--workspace-form-muted)] dark:text-gray-300">No items surfaced.</p>
+          <p className="text-sm text-[var(--workspace-form-muted)] dark:text-gray-300">
+            No items surfaced.
+          </p>
         ) : (
           items.map((item) => (
             <div
               key={`${title}:${item}`}
-              className={`rounded-md px-3 py-3 text-sm leading-6 ${
-                tone === "positive"
-                  ? "bg-[var(--workspace-form-success-bg)] text-[var(--workspace-form-success-text)]"
-                  : "bg-[var(--workspace-form-warning-bg)] text-[var(--workspace-form-warning-text)]"
-              }`}
+              className={`flex gap-3 rounded-xl border px-4 py-3 text-sm leading-7 ${styles.item}`}
             >
-              {item}
+              <span className={`mt-2 h-2.5 w-2.5 shrink-0 rounded-full ${styles.dot}`} />
+              <span>{item}</span>
             </div>
           ))
         )}
@@ -1687,6 +2624,253 @@ function DetailRow({ label, value }: { label: string; value: string }) {
         {label}
       </p>
       <p className="mt-1 break-words text-sm leading-6 text-[var(--workspace-form-title)] dark:text-white">{value || "-"}</p>
+    </div>
+  );
+}
+
+function InlineLoader({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`inline-block animate-spin rounded-full border-2 border-current border-r-transparent ${className}`}
+    />
+  );
+}
+
+function SkeletonBlock({ className }: { className: string }) {
+  return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-slate-200/80 dark:bg-slate-700/60 ${className}`} />;
+}
+
+function PublishedFormsListSkeleton() {
+  return (
+    <div aria-busy="true" className="space-y-3">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div
+          key={`published-form-skeleton-${index + 1}`}
+          className="rounded-lg border border-[var(--workspace-form-border-soft)] bg-white px-4 py-4 dark:border-gray-800 dark:bg-gray-900"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-2">
+              <SkeletonBlock className="h-4 w-2/3 max-w-[220px]" />
+              <SkeletonBlock className="h-3 w-1/3 max-w-[120px]" />
+            </div>
+            <SkeletonBlock className="h-6 w-20 rounded-full" />
+          </div>
+          <div className="mt-3 flex gap-2">
+            <SkeletonBlock className="h-3 w-24" />
+            <SkeletonBlock className="h-3 w-20" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FormsGridSkeleton() {
+  return (
+    <div aria-busy="true" className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div
+          key={`forms-grid-skeleton-${index + 1}`}
+          className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-white px-4 py-4 dark:border-gray-800 dark:bg-gray-900"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-2">
+              <SkeletonBlock className="h-4 w-3/4" />
+              <SkeletonBlock className="h-3 w-1/3" />
+            </div>
+            <SkeletonBlock className="h-6 w-20 rounded-full" />
+          </div>
+          <div className="mt-3 flex gap-2">
+            <SkeletonBlock className="h-3 w-24" />
+            <SkeletonBlock className="h-3 w-20" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ResponsesSectionSkeleton() {
+  return (
+    <div aria-busy="true" className="space-y-6">
+      <div className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] p-4 shadow-[var(--workspace-form-shadow-sm)] dark:border-gray-800 dark:bg-gray-950/40">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <SkeletonBlock className="h-4 w-28" />
+            <SkeletonBlock className="h-4 w-full max-w-[320px]" />
+          </div>
+          <div className="flex gap-2">
+            <SkeletonBlock className="h-8 w-28 rounded-full" />
+            <SkeletonBlock className="h-8 w-40 rounded-full" />
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div
+              key={`candidate-list-skeleton-${index + 1}`}
+              className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-white p-4 dark:border-gray-800 dark:bg-gray-900/80"
+            >
+              <div className="flex items-start gap-3">
+                <SkeletonBlock className="h-11 w-11 rounded-2xl" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <SkeletonBlock className="h-4 w-2/3" />
+                      <SkeletonBlock className="h-3 w-1/2" />
+                    </div>
+                    <SkeletonBlock className="h-7 w-12 rounded-xl" />
+                  </div>
+                  <div className="flex gap-2">
+                    <SkeletonBlock className="h-6 w-24 rounded-full" />
+                    <SkeletonBlock className="h-6 w-16 rounded-full" />
+                  </div>
+                  <SkeletonBlock className="h-3 w-28" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <article className="space-y-6">
+        <section className="overflow-hidden rounded-2xl border border-[var(--workspace-form-border-soft)] bg-white p-6 shadow-[var(--workspace-form-shadow-md)] dark:border-gray-800 dark:bg-gray-900">
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-6 2xl:flex-row 2xl:items-start 2xl:justify-between">
+              <div className="flex min-w-0 items-start gap-4">
+                <SkeletonBlock className="h-16 w-16 rounded-2xl" />
+                <div className="min-w-0 flex-1 space-y-3">
+                  <SkeletonBlock className="h-4 w-32" />
+                  <SkeletonBlock className="h-9 w-full max-w-[300px]" />
+                  <SkeletonBlock className="h-4 w-full max-w-[520px]" />
+                  <SkeletonBlock className="h-4 w-40" />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3 2xl:w-[360px]">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div
+                    key={`review-metric-skeleton-${index + 1}`}
+                    className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 dark:border-gray-800 dark:bg-gray-950/60"
+                  >
+                    <SkeletonBlock className="h-3 w-16" />
+                    <SkeletonBlock className="mt-3 h-5 w-20" />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <SkeletonBlock className="h-7 w-24 rounded-full" />
+              <SkeletonBlock className="h-7 w-28 rounded-full" />
+              <SkeletonBlock className="h-7 w-36 rounded-full" />
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+            <SkeletonBlock className="h-11 w-44" />
+            <SkeletonBlock className="h-11 w-40" />
+          </div>
+        </section>
+
+        <div className="grid gap-6 2xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+          {Array.from({ length: 2 }).map((_, index) => (
+            <section
+              key={`detail-section-skeleton-${index + 1}`}
+              className="rounded-2xl border border-[var(--workspace-form-border-soft)] bg-white p-5 shadow-[var(--workspace-form-shadow-sm)] dark:border-gray-800 dark:bg-gray-900"
+            >
+              <div className="space-y-3">
+                <SkeletonBlock className="h-4 w-28" />
+                <SkeletonBlock className="h-20 w-full" />
+                <SkeletonBlock className="h-20 w-full" />
+              </div>
+            </section>
+          ))}
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function ReviewWorkspaceSkeleton() {
+  return (
+    <div aria-busy="true" className="space-y-6">
+      <section className="overflow-hidden rounded-xl border border-[var(--workspace-form-border)] bg-white shadow-[var(--workspace-form-shadow-md)] dark:border-gray-800 dark:bg-gray-900">
+        <div className="space-y-5 p-5 sm:p-6">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <SkeletonBlock className="h-6 w-20 rounded-full" />
+                <SkeletonBlock className="h-4 w-24" />
+              </div>
+              <SkeletonBlock className="h-10 w-full max-w-[420px]" />
+              <SkeletonBlock className="h-4 w-full max-w-3xl" />
+              <SkeletonBlock className="h-4 w-3/4 max-w-2xl" />
+            </div>
+
+            <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap xl:justify-end">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <SkeletonBlock
+                  key={`review-action-skeleton-${index + 1}`}
+                  className="h-11 min-w-[120px]"
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div
+                key={`review-stat-skeleton-${index + 1}`}
+                className="rounded-lg border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 dark:border-gray-800 dark:bg-gray-950/60"
+              >
+                <SkeletonBlock className="h-3 w-20" />
+                <SkeletonBlock className="mt-3 h-8 w-16" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid border-t border-[var(--workspace-form-border-soft)] dark:border-gray-800 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-4 p-5 sm:p-6">
+            <SkeletonBlock className="h-4 w-32" />
+            <div className="flex flex-wrap gap-2">
+              <SkeletonBlock className="h-7 w-24 rounded-full" />
+              <SkeletonBlock className="h-7 w-20 rounded-full" />
+              <SkeletonBlock className="h-7 w-24 rounded-full" />
+            </div>
+            <SkeletonBlock className="h-24 w-full" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <SkeletonBlock className="h-24 w-full" />
+              <SkeletonBlock className="h-24 w-full" />
+            </div>
+          </div>
+
+          <aside className="space-y-4 border-t border-[var(--workspace-form-border-soft)] p-5 dark:border-gray-800 lg:border-l lg:border-t-0 sm:p-6">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={`detail-row-skeleton-${index + 1}`} className="space-y-2">
+                <SkeletonBlock className="h-3 w-20" />
+                <SkeletonBlock className="h-4 w-full" />
+              </div>
+            ))}
+          </aside>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-xl border border-[var(--workspace-form-border)] bg-white shadow-[var(--workspace-form-shadow-md)] dark:border-gray-800 dark:bg-gray-900">
+        <div className="border-b border-[var(--workspace-form-border-soft)] p-5 dark:border-gray-800 sm:p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="space-y-2">
+              <SkeletonBlock className="h-4 w-32" />
+              <SkeletonBlock className="h-8 w-56" />
+              <SkeletonBlock className="h-4 w-full max-w-[420px]" />
+            </div>
+            <SkeletonBlock className="h-8 w-28 rounded-full" />
+          </div>
+        </div>
+        <div className="p-5 sm:p-6">
+          <ResponsesSectionSkeleton />
+        </div>
+      </section>
     </div>
   );
 }
@@ -1721,6 +2905,46 @@ function MetaTag({ label }: { label: string }) {
       {label}
     </span>
   );
+}
+
+function getApplicationDisplayName(application: HiringApplicationRecord) {
+  return (
+    application.analysis.result.candidateProfile.name ||
+    application.applicant.fullName ||
+    application.resumeFile.fileName
+  );
+}
+
+function getInitials(value: string) {
+  const parts = value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+
+  if (parts.length === 0) {
+    return "CV";
+  }
+
+  return parts.map((part) => part.charAt(0).toUpperCase()).join("");
+}
+
+function formatApplicationDate(value: string) {
+  return new Date(value).toLocaleString(undefined, {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function clampInteger(value: number, min: number, max: number, fallback: number) {
+  if (Number.isNaN(value)) {
+    return fallback;
+  }
+
+  return Math.max(min, Math.min(max, Math.round(value)));
 }
 
 function buildRoleSetup({
@@ -2082,6 +3306,74 @@ function toDateInputValue(value: string) {
   }
 
   return date.toISOString().slice(0, 10);
+}
+
+function hydrateGeneratedFormFields(fields: HiringFormField[]) {
+  return fields.map((field, index) => ({
+    ...field,
+    id:
+      typeof field.id === "string" && field.id.trim()
+        ? `${field.id.trim()}-${index + 1}`
+        : `generated-field-${Date.now()}-${index + 1}`,
+    label: field.label?.trim() || `Question ${index + 1}`,
+    placeholder: field.placeholder || "",
+    helper: field.helper || "",
+    required: field.required !== false,
+    options: isChoiceFieldType(field.type) ? getEditableBuilderOptions(field.options) : [],
+  }));
+}
+
+function buildGeneratedJobDescriptionFileName(
+  title: string,
+  roleTitle: string
+) {
+  const base = `${roleTitle || title || "job-description"}`
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `${base || "job-description"}-draft.txt`;
+}
+
+function describeGeneratedFormDraft(
+  provider: "local" | "gemini" | "huggingface",
+  providerDetail?: string,
+  providerWarnings?: string[]
+) {
+  const warnings = providerWarnings?.filter(Boolean) ?? [];
+
+  if (provider === "local") {
+    return warnings.length > 0
+      ? `Generated from the built-in form generator. ${warnings[0]}`
+      : "Generated from the built-in form generator using your role brief, skills, and draft notes.";
+  }
+
+  const providerLabel = provider === "gemini" ? "Gemini" : "Hugging Face";
+  const detailText = providerDetail ? ` (${providerDetail})` : "";
+  const warningText = warnings.length > 0 ? ` ${warnings[0]}` : "";
+
+  return `Generated with ${providerLabel}${detailText}. The draft is now loaded into the builder and can be edited before publishing.${warningText}`;
+}
+
+function describeGeneratedJobDescription(
+  provider: "local" | "gemini" | "huggingface",
+  providerDetail?: string,
+  providerWarnings?: string[]
+) {
+  const warnings = providerWarnings?.filter(Boolean) ?? [];
+
+  if (provider === "local") {
+    return warnings.length > 0
+      ? `Generated from the built-in JD template. ${warnings[0]}`
+      : "Generated from the built-in JD template using your role brief and screening notes.";
+  }
+
+  const providerLabel = provider === "gemini" ? "Gemini" : "Hugging Face";
+  const detailText = providerDetail ? ` (${providerDetail})` : "";
+  const warningText = warnings.length > 0 ? ` ${warnings[0]}` : "";
+
+  return `Generated with ${providerLabel}${detailText}. Review and edit the draft before publishing.${warningText}`;
 }
 
 const inputClassName =

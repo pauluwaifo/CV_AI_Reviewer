@@ -5,13 +5,12 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useDropzone } from "react-dropzone";
 
-import { saveAnalysisSession } from "@/lib/analysis-session";
 import type {
   AnalysisProvider,
-  AnalysisResponse,
   DocumentType,
   RoleSetup,
 } from "@/types/document-intelligence";
+import type { StoredAnalysisSession } from "@/types/analysis-session";
 import { maxUploadSizeBytes } from "@/types/document-intelligence";
 
 const providerOptions: Array<{ value: AnalysisProvider; label: string }> = [
@@ -120,8 +119,7 @@ export default function UploadDocumentPage() {
       });
 
       const payload = (await result.json().catch(() => null)) as
-        | AnalysisResponse
-        | { error?: string }
+        | { screening?: StoredAnalysisSession; error?: string }
         | null;
 
       if (!result.ok) {
@@ -132,18 +130,11 @@ export default function UploadDocumentPage() {
         );
       }
 
-      saveAnalysisSession({
-        analysisGoal: analysisGoal.trim(),
-        createdAt: new Date().toISOString(),
-        documentType,
-        provider,
-        recruiterNotes: "",
-        recruiterStatus: "New",
-        roleSetup,
-        response: payload as AnalysisResponse,
-      });
+      if (!payload?.screening?.id) {
+        throw new Error("The analysis completed, but the screening record could not be saved.");
+      }
 
-      router.push("/results");
+      router.push(`/results?screening=${encodeURIComponent(payload.screening.id)}`);
     } catch (submissionError) {
       setError(
         submissionError instanceof Error
@@ -172,7 +163,7 @@ export default function UploadDocumentPage() {
         <div className="flex flex-wrap gap-2">
           <Tag label="CV screening mode" />
           <Tag label="Role matching" />
-          <Tag label="Local comparison history" />
+          <Tag label="Workspace screening history" />
           <Tag label="PDF, text, image" />
           <Tag label="15 MB max" />
         </div>
@@ -402,7 +393,7 @@ export default function UploadDocumentPage() {
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm leading-6 text-gray-500 dark:text-gray-400">
-            The latest candidate review opens on its own page after screening completes.
+            The saved candidate review opens on its own page after screening completes.
           </p>
 
           <button

@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { DocumentAnalysisError, extractUploadTextFromFile } from "@/lib/document-intelligence";
 import {
   createWorkspaceUnauthorizedResponse,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
+import { normalizeHiringFormScreeningPolicy } from "@/lib/hiring-screening-policy";
 import {
   deleteHiringForm,
   getHiringFormDetail,
@@ -43,7 +45,7 @@ export async function GET(
     return NextResponse.json({ form: publicForm });
   }
 
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
@@ -75,7 +77,7 @@ export async function PATCH(
   { params }: { params: Promise<{ formId: string }> }
 ) {
   const { formId } = await params;
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
@@ -101,10 +103,19 @@ export async function PATCH(
     }
 
     const title = String(formData.get("title") || "").trim();
+    const jdFile = formData.get("jobDescriptionFile");
+    const jdText = String(formData.get("jobDescriptionText") || "").trim();
+    const jdTextFileName = String(formData.get("jobDescriptionFileName") || "").trim();
 
     if (!title) {
       return NextResponse.json({ error: "Add a form title first." }, { status: 400 });
     }
+
+    const jdAttachment = jdFile instanceof File
+      ? await buildJdAttachment(jdFile)
+      : jdText
+        ? buildTextJdAttachment(jdText, jdTextFileName)
+        : null;
 
     const form = await updateHiringForm({
       formId,
@@ -114,9 +125,11 @@ export async function PATCH(
       intro: String(formData.get("intro") || "").trim(),
       analysisGoal: String(formData.get("analysisGoal") || "").trim(),
       roleSetup: parseRoleSetup(formData.get("roleSetup")),
+      screeningPolicy: parseScreeningPolicy(formData.get("screeningPolicy")),
       customQuestions: parseCustomQuestions(formData.get("customQuestions")),
       formFields: parseFormFields(formData.get("formFields")),
       expiresAt: parseExpiresAt(formData.get("expiresAt")),
+      jdAttachment,
     });
 
     if (!form) {
@@ -124,11 +137,27 @@ export async function PATCH(
     }
 
     return NextResponse.json({ form });
-  } catch {
+  } catch (error) {
+    if (error instanceof DocumentAnalysisError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     return NextResponse.json(
       { error: "I couldn't update that form right now." },
       { status: 500 }
     );
+  }
+}
+
+function parseScreeningPolicy(value: FormDataEntryValue | null) {
+  if (typeof value !== "string" || !value.trim()) {
+    return normalizeHiringFormScreeningPolicy(null);
+  }
+
+  try {
+    return normalizeHiringFormScreeningPolicy(JSON.parse(value));
+  } catch {
+    return normalizeHiringFormScreeningPolicy(null);
   }
 }
 
@@ -137,7 +166,7 @@ export async function DELETE(
   { params }: { params: Promise<{ formId: string }> }
 ) {
   const { formId } = await params;
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
@@ -218,6 +247,27 @@ function buildAttachmentDisposition(fileName: string) {
   const encoded = encodeURIComponent(fileName);
 
   return `attachment; filename="${sanitized}"; filename*=UTF-8''${encoded}`;
+}
+
+async function buildJdAttachment(file: File) {
+  const extracted = await extractUploadTextFromFile(file);
+  return {
+    fileName: file.name,
+    inputKind: extracted.inputKind,
+    mimeType: extracted.mimeType,
+    extractedCharacters: extracted.text.length,
+    text: extracted.text,
+  };
+}
+
+function buildTextJdAttachment(text: string, fileName: string) {
+  return {
+    fileName: fileName || "generated-job-description.txt",
+    inputKind: "text" as const,
+    mimeType: "text/plain",
+    extractedCharacters: text.length,
+    text,
+  };
 }
 
 function parseFormFields(value: FormDataEntryValue | null): HiringFormField[] {

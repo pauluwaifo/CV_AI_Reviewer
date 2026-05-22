@@ -6,6 +6,9 @@ import {
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
 import {
+  normalizeHiringFormScreeningPolicy,
+} from "@/lib/hiring-screening-policy";
+import {
   createHiringForm,
   listHiringForms,
 } from "@/lib/hiring-funnel-store";
@@ -21,7 +24,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
@@ -33,7 +36,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
@@ -50,6 +53,8 @@ export async function POST(request: Request) {
     const formFields = parseFormFields(formData.get("formFields"));
     const expiresAt = parseExpiresAt(formData.get("expiresAt"));
     const jdFile = formData.get("jobDescriptionFile");
+    const jdText = String(formData.get("jobDescriptionText") || "").trim();
+    const jdTextFileName = String(formData.get("jobDescriptionFileName") || "").trim();
     const workspace = getWorkspacePublicSnapshot(
       await getWorkspaceSettings(session.workspaceId)
     );
@@ -58,9 +63,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Add a form title first." }, { status: 400 });
     }
 
-    const jdAttachment =
-      jdFile instanceof File
-        ? await buildJdAttachment(jdFile)
+    const jdAttachment = jdFile instanceof File
+      ? await buildJdAttachment(jdFile)
+      : jdText
+        ? buildTextJdAttachment(jdText, jdTextFileName)
         : null;
 
     const created = await createHiringForm({
@@ -71,6 +77,7 @@ export async function POST(request: Request) {
       intro,
       analysisGoal,
       roleSetup,
+      screeningPolicy: parseScreeningPolicy(formData.get("screeningPolicy")),
       customQuestions,
       formFields,
       expiresAt,
@@ -90,6 +97,18 @@ export async function POST(request: Request) {
       { error: "I couldn't create that hiring form right now." },
       { status: 500 }
     );
+  }
+}
+
+function parseScreeningPolicy(value: FormDataEntryValue | null) {
+  if (typeof value !== "string" || !value.trim()) {
+    return normalizeHiringFormScreeningPolicy(null);
+  }
+
+  try {
+    return normalizeHiringFormScreeningPolicy(JSON.parse(value));
+  } catch {
+    return normalizeHiringFormScreeningPolicy(null);
   }
 }
 
@@ -195,6 +214,16 @@ async function buildJdAttachment(file: File) {
     mimeType: extracted.mimeType,
     extractedCharacters: extracted.text.length,
     text: extracted.text,
+  };
+}
+
+function buildTextJdAttachment(text: string, fileName: string) {
+  return {
+    fileName: fileName || "generated-job-description.txt",
+    inputKind: "text" as const,
+    mimeType: "text/plain",
+    extractedCharacters: text.length,
+    text,
   };
 }
 

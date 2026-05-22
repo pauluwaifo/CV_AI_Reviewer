@@ -9,6 +9,7 @@ export interface WorkspacePublicSnapshot {
   organizationName: string;
   tagline: string;
   workspaceId: string;
+  contactEmail?: string;
   dashboardAccent: string;
   formAccent: string;
   formHeaderImageDataUrl: string;
@@ -53,6 +54,11 @@ export interface HiringFormJdAttachment {
   text: string;
 }
 
+export interface HiringFormScreeningPolicy {
+  autoFilterLowRoleMatch: boolean;
+  minimumRoleMatchScore: number;
+}
+
 export interface HiringFormRecord {
   id: string;
   workspaceId: string;
@@ -61,6 +67,7 @@ export interface HiringFormRecord {
   intro: string;
   analysisGoal: string;
   roleSetup: RoleSetup;
+  screeningPolicy: HiringFormScreeningPolicy;
   customQuestions: HiringFormQuestion[];
   formFields: HiringFormField[];
   workspace: WorkspacePublicSnapshot;

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "gmail:oauth": "node scripts/gmail-oauth.mjs"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.19",

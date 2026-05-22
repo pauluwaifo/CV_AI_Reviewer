@@ -36,7 +36,12 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!(await authenticateWorkspaceCredentials(workspaceId, accessKey))) {
+    const authentication = await authenticateWorkspaceCredentials(
+      workspaceId,
+      accessKey
+    );
+
+    if (!authentication) {
       return NextResponse.json(
         { error: "The workspace ID or access key is invalid." },
         { status: 401 }
@@ -44,8 +49,8 @@ export async function POST(request: Request) {
     }
 
     const [{ token, maxAgeSeconds, session }, settings] = await Promise.all([
-      createWorkspaceSession(workspaceId, keepSignedIn),
-      getWorkspaceSettings(workspaceId),
+      createWorkspaceSession(authentication, keepSignedIn),
+      getWorkspaceSettings(authentication.workspaceId),
     ]);
     const response = NextResponse.json({
       ok: true,

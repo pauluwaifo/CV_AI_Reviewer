@@ -2,7 +2,6 @@ import "server-only";
 
 import {
   createHash,
-  createHmac,
   randomBytes,
   scryptSync,
   timingSafeEqual,
@@ -18,23 +17,35 @@ import {
   updateWorkspaceMemberStatus,
   verifyMemberAccessKey,
 } from "@/lib/workspace-members-store";
+import {
+  createWorkspaceSessionRecord,
+  deleteWorkspaceSessionRecordByTokenHash,
+  getWorkspaceSessionRecordByTokenHash,
+} from "@/lib/workspace-session-store";
 import { sanitizeWorkspaceId } from "@/lib/workspace-settings";
+import type {
+  WorkspaceSession,
+  WorkspaceSessionPrincipalType,
+  WorkspaceSessionRecord,
+  WorkspaceSessionRole,
+} from "@/types/workspace-session";
 
 export const WORKSPACE_SESSION_COOKIE_NAME = "hiring-workspace-session";
 
 const DEFAULT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
 const EXTENDED_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 14;
+export type {
+  WorkspaceSession,
+  WorkspaceSessionPrincipalType,
+  WorkspaceSessionRole,
+} from "@/types/workspace-session";
 
-type WorkspaceSessionTokenPayload = {
+export type WorkspaceAuthenticationResult = {
   workspaceId: string;
-  expiresAt: number;
-  issuedAt: number;
-};
-
-export type WorkspaceSession = {
-  workspaceId: string;
-  expiresAt: string;
-  issuedAt: string;
+  role: WorkspaceSessionRole;
+  principalType: WorkspaceSessionPrincipalType;
+  email: string;
+  memberId: string | null;
 };
 
 export async function getWorkspaceSession() {
@@ -44,7 +55,7 @@ export async function getWorkspaceSession() {
   );
 }
 
-export function getWorkspaceSessionFromRequest(request: Request) {
+export async function getWorkspaceSessionFromRequest(request: Request) {
   const cookieValue = getCookieValue(
     request.headers.get("cookie"),
     WORKSPACE_SESSION_COOKIE_NAME
@@ -53,8 +64,8 @@ export function getWorkspaceSessionFromRequest(request: Request) {
   return readWorkspaceSessionFromCookieValue(cookieValue);
 }
 
-export function requireWorkspaceApiSession(request: Request) {
-  const session = getWorkspaceSessionFromRequest(request);
+export async function requireWorkspaceApiSession(request: Request) {
+  const session = await getWorkspaceSessionFromRequest(request);
 
   if (!session) {
     return null;
@@ -63,29 +74,33 @@ export function requireWorkspaceApiSession(request: Request) {
   return session;
 }
 
-export async function requireWorkspacePageSession(nextPath: string) {
+export async function requireWorkspacePageSession(
+  nextPath: string,
+  options?: {
+    role?: WorkspaceSessionRole;
+  }
+) {
   const session = await getWorkspaceSession();
 
   if (!session) {
     redirect(`/signin?next=${encodeURIComponent(normalizeNextPath(nextPath))}`);
   }
 
+  if (options?.role && !workspaceSessionHasRole(session, options.role)) {
+    redirect("/pipeline");
+  }
+
   return session;
 }
 
 export async function createWorkspaceSession(
-  workspaceId: string,
+  auth: Pick<
+    WorkspaceAuthenticationResult,
+    "workspaceId" | "role" | "principalType" | "email" | "memberId"
+  >,
   keepSignedIn: boolean
 ) {
-  const sessionSecret = getWorkspaceSessionSecret();
-
-  if (!sessionSecret) {
-    throw new Error(
-      "WORKSPACE_SESSION_SECRET is missing. Add it to your environment before enabling workspace sign-in."
-    );
-  }
-
-  const normalizedWorkspaceId = normalizeWorkspaceIdInput(workspaceId);
+  const normalizedWorkspaceId = normalizeWorkspaceIdInput(auth.workspaceId);
 
   if (!normalizedWorkspaceId) {
     throw new Error("A valid workspace ID is required to create a session.");
@@ -94,20 +109,30 @@ export async function createWorkspaceSession(
   const maxAgeSeconds = keepSignedIn
     ? EXTENDED_SESSION_MAX_AGE_SECONDS
     : DEFAULT_SESSION_MAX_AGE_SECONDS;
-  const payload: WorkspaceSessionTokenPayload = {
+  const token = `ws_${randomBytes(32).toString("base64url")}`;
+  const issuedAt = new Date(now * 1000).toISOString();
+  const expiresAt = new Date((now + maxAgeSeconds) * 1000).toISOString();
+  const session: WorkspaceSession = {
     workspaceId: normalizedWorkspaceId,
-    expiresAt: now + maxAgeSeconds,
-    issuedAt: now,
+    role: normalizeWorkspaceRole(auth.role),
+    principalType: normalizeWorkspacePrincipalType(auth.principalType),
+    email: normalizeWorkspaceSessionEmail(auth.email),
+    memberId: normalizeWorkspaceSessionMemberId(auth.memberId),
+    issuedAt,
+    expiresAt,
   };
-  const encodedPayload = toBase64Url(JSON.stringify(payload));
-  const signature = createHmac("sha256", sessionSecret)
-    .update(encodedPayload)
-    .digest("base64url");
+  const record: WorkspaceSessionRecord = {
+    ...session,
+    tokenHash: hashWorkspaceSessionToken(token),
+    createdAt: issuedAt,
+  };
+
+  await createWorkspaceSessionRecord(record);
 
   return {
-    token: `${encodedPayload}.${signature}`,
+    token,
     maxAgeSeconds,
-    session: toWorkspaceSession(payload),
+    session,
   };
 }
 
@@ -119,75 +144,22 @@ export async function authenticateWorkspaceCredentials(
   const trimmedAccessKey = accessKey.trim();
 
   if (!normalizedWorkspaceId) {
-    return false;
+    return null;
   }
 
   if (!trimmedAccessKey) {
-    return false;
-  }
-
-  const configuredAccessKey = getProvisionedWorkspaceAccessKeys().get(
-    normalizedWorkspaceId
-  );
-
-  if (configuredAccessKey) {
-    const configuredDigest = createHash("sha256")
-      .update(configuredAccessKey)
-      .digest();
-    const submittedDigest = createHash("sha256").update(trimmedAccessKey).digest();
-
-    return timingSafeEqual(configuredDigest, submittedDigest);
+    return null;
   }
 
   const managedRecord = await getWorkspaceAccessRecord(normalizedWorkspaceId);
-
-  if (!managedRecord) {
-    const members = await listWorkspaceMemberAccessRecords(normalizedWorkspaceId);
-    const matchingMember = members.find(
-      (member) =>
-        member.status !== "revoked" &&
-        verifyMemberAccessKey(trimmedAccessKey, member.accessKeyHash)
+  if (managedRecord && verifyWorkspaceAccessKey(trimmedAccessKey, managedRecord.accessKeyHash)) {
+    return buildSharedWorkspaceAuthenticationResult(
+      normalizedWorkspaceId,
+      managedRecord.contactEmail
     );
-
-    if (!matchingMember) {
-      return false;
-    }
-
-    if (matchingMember.status === "invited") {
-      await updateWorkspaceMemberStatus({
-        workspaceId: normalizedWorkspaceId,
-        memberId: matchingMember.id,
-        status: "active",
-      }).catch(() => undefined);
-    }
-
-    return true;
   }
 
-  if (verifyWorkspaceAccessKey(trimmedAccessKey, managedRecord.accessKeyHash)) {
-    return true;
-  }
-
-  const members = await listWorkspaceMemberAccessRecords(normalizedWorkspaceId);
-  const matchingMember = members.find(
-    (member) =>
-      member.status !== "revoked" &&
-      verifyMemberAccessKey(trimmedAccessKey, member.accessKeyHash)
-  );
-
-  if (!matchingMember) {
-    return false;
-  }
-
-  if (matchingMember.status === "invited") {
-    await updateWorkspaceMemberStatus({
-      workspaceId: normalizedWorkspaceId,
-      memberId: matchingMember.id,
-      status: "active",
-    }).catch(() => undefined);
-  }
-
-  return true;
+  return authenticateWorkspaceMember(normalizedWorkspaceId, trimmedAccessKey);
 }
 
 export function createWorkspaceUnauthorizedResponse() {
@@ -198,6 +170,22 @@ export function createWorkspaceUnauthorizedResponse() {
     },
     { status: 401 }
   );
+}
+
+export function createWorkspaceForbiddenResponse() {
+  return NextResponse.json(
+    {
+      error:
+        "You need workspace admin access to manage settings, member invites, or shared security controls.",
+    },
+    { status: 403 }
+  );
+}
+
+export function isWorkspaceAdminSession(
+  session: Pick<WorkspaceSession, "role"> | null | undefined
+) {
+  return workspaceSessionHasRole(session, "admin");
 }
 
 export function applyWorkspaceSessionCookie(
@@ -242,110 +230,41 @@ export function hashWorkspaceAccessKey(accessKey: string) {
   return `${salt}:${derivedKey}`;
 }
 
-export function isProvisionedWorkspace(workspaceId: string) {
-  const normalizedWorkspaceId = normalizeWorkspaceIdInput(workspaceId);
+export async function revokeWorkspaceSession(request: Request) {
+  const token = getCookieValue(
+    request.headers.get("cookie"),
+    WORKSPACE_SESSION_COOKIE_NAME
+  );
 
-  if (!normalizedWorkspaceId) {
+  if (!token) {
     return false;
   }
 
-  return getProvisionedWorkspaceAccessKeys().has(normalizedWorkspaceId);
+  return deleteWorkspaceSessionRecordByTokenHash(hashWorkspaceSessionToken(token));
 }
 
-function readWorkspaceSessionFromCookieValue(cookieValue: string | null) {
+async function readWorkspaceSessionFromCookieValue(cookieValue: string | null) {
   if (!cookieValue) {
     return null;
   }
 
-  const [encodedPayload, signature] = cookieValue.split(".", 2);
+  const record = await getWorkspaceSessionRecordByTokenHash(
+    hashWorkspaceSessionToken(cookieValue)
+  );
 
-  if (!encodedPayload || !signature) {
+  if (!record) {
     return null;
   }
 
-  const sessionSecret = getWorkspaceSessionSecret();
-
-  if (!sessionSecret) {
-    return null;
-  }
-
-  const expectedSignature = createHmac("sha256", sessionSecret)
-    .update(encodedPayload)
-    .digest("base64url");
-
-  if (!safeEqual(signature, expectedSignature)) {
-    return null;
-  }
-
-  try {
-    const decodedPayload = JSON.parse(
-      Buffer.from(encodedPayload, "base64url").toString("utf8")
-    ) as Partial<WorkspaceSessionTokenPayload>;
-    const workspaceId = normalizeWorkspaceIdInput(decodedPayload.workspaceId);
-    const expiresAt =
-      typeof decodedPayload.expiresAt === "number" ? decodedPayload.expiresAt : 0;
-    const issuedAt =
-      typeof decodedPayload.issuedAt === "number" ? decodedPayload.issuedAt : 0;
-
-    if (!workspaceId || !expiresAt || !issuedAt) {
-      return null;
-    }
-
-    if (expiresAt <= Math.floor(Date.now() / 1000)) {
-      return null;
-    }
-
-    return toWorkspaceSession({
-      workspaceId,
-      expiresAt,
-      issuedAt,
-    });
-  } catch {
-    return null;
-  }
-}
-
-function toWorkspaceSession(payload: WorkspaceSessionTokenPayload): WorkspaceSession {
   return {
-    workspaceId: sanitizeWorkspaceId(payload.workspaceId),
-    expiresAt: new Date(payload.expiresAt * 1000).toISOString(),
-    issuedAt: new Date(payload.issuedAt * 1000).toISOString(),
+    workspaceId: sanitizeWorkspaceId(record.workspaceId),
+    expiresAt: record.expiresAt,
+    issuedAt: record.issuedAt,
+    role: normalizeWorkspaceRole(record.role),
+    principalType: normalizeWorkspacePrincipalType(record.principalType),
+    email: normalizeWorkspaceSessionEmail(record.email),
+    memberId: normalizeWorkspaceSessionMemberId(record.memberId),
   };
-}
-
-function getWorkspaceSessionSecret() {
-  const secret = process.env.WORKSPACE_SESSION_SECRET?.trim();
-  return secret || null;
-}
-
-function getProvisionedWorkspaceAccessKeys() {
-  const rawValue = process.env.WORKSPACE_ACCESS_KEYS?.trim() ?? "";
-  const entries = rawValue
-    .split(/[\n,;]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const workspaceKeys = new Map<string, string>();
-
-  for (const entry of entries) {
-    const separatorIndex = entry.includes("=")
-      ? entry.indexOf("=")
-      : entry.indexOf(":");
-
-    if (separatorIndex <= 0) {
-      continue;
-    }
-
-    const workspaceId = sanitizeWorkspaceId(entry.slice(0, separatorIndex));
-    const accessKey = entry.slice(separatorIndex + 1).trim();
-
-    if (!workspaceId || !accessKey) {
-      continue;
-    }
-
-    workspaceKeys.set(workspaceId, accessKey);
-  }
-
-  return workspaceKeys;
 }
 
 function getCookieValue(cookieHeader: string | null, name: string) {
@@ -366,8 +285,8 @@ function getCookieValue(cookieHeader: string | null, name: string) {
   return null;
 }
 
-function toBase64Url(value: string) {
-  return Buffer.from(value, "utf8").toString("base64url");
+function hashWorkspaceSessionToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 function safeEqual(left: string, right: string) {
@@ -387,6 +306,85 @@ function normalizeWorkspaceIdInput(value: unknown) {
   }
 
   return sanitizeWorkspaceId(value);
+}
+
+function normalizeWorkspaceRole(value: unknown): WorkspaceSessionRole {
+  return value === "member" ? "member" : "admin";
+}
+
+function normalizeWorkspacePrincipalType(
+  value: unknown
+): WorkspaceSessionPrincipalType {
+  return value === "member" ? "member" : "shared";
+}
+
+function normalizeWorkspaceSessionEmail(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function normalizeWorkspaceSessionMemberId(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function workspaceSessionHasRole(
+  session: Pick<WorkspaceSession, "role"> | null | undefined,
+  requiredRole: WorkspaceSessionRole
+) {
+  if (!session) {
+    return false;
+  }
+
+  const rank = {
+    member: 1,
+    admin: 2,
+  } satisfies Record<WorkspaceSessionRole, number>;
+
+  return rank[session.role] >= rank[requiredRole];
+}
+
+function buildSharedWorkspaceAuthenticationResult(
+  workspaceId: string,
+  email?: string
+): WorkspaceAuthenticationResult {
+  return {
+    workspaceId,
+    role: "admin",
+    principalType: "shared",
+    email: normalizeWorkspaceSessionEmail(email),
+    memberId: null,
+  };
+}
+
+async function authenticateWorkspaceMember(
+  workspaceId: string,
+  accessKey: string
+): Promise<WorkspaceAuthenticationResult | null> {
+  const members = await listWorkspaceMemberAccessRecords(workspaceId);
+  const matchingMember = members.find(
+    (member) =>
+      member.status !== "revoked" &&
+      verifyMemberAccessKey(accessKey, member.accessKeyHash)
+  );
+
+  if (!matchingMember) {
+    return null;
+  }
+
+  if (matchingMember.status === "invited") {
+    await updateWorkspaceMemberStatus({
+      workspaceId,
+      memberId: matchingMember.id,
+      status: "active",
+    }).catch(() => undefined);
+  }
+
+  return {
+    workspaceId,
+    role: matchingMember.role,
+    principalType: "member",
+    email: normalizeWorkspaceSessionEmail(matchingMember.email),
+    memberId: matchingMember.id,
+  };
 }
 
 function verifyWorkspaceAccessKey(accessKey: string, storedHash: string) {

@@ -38,6 +38,16 @@ export default function WorkspaceSettingsPage() {
     message: string;
   } | null>(null);
   const formTheme = buildPublicFormTheme(draft.formAccent);
+  const activeMembers = members.filter((member) => member.status === "active").length;
+  const pendingMembers = members.filter((member) => member.status === "invited").length;
+  const adminMembers = members.filter((member) => member.role === "admin").length;
+  const brandingReadinessCount = [
+    draft.tagline.trim(),
+    draft.logoDataUrl,
+    draft.formHeaderImageDataUrl,
+  ].filter(Boolean).length;
+  const workspaceProductName = draft.appName.trim() || "your hiring workspace";
+  const workspaceOrganizationName = draft.organizationName.trim() || "your company";
 
   useEffect(() => {
     setDraft(settings);
@@ -335,39 +345,65 @@ export default function WorkspaceSettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 py-6 sm:py-8 md:py-10">
-      <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
+    <div className="w-full space-y-6 py-6 sm:py-8 md:py-10">
+      <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
         <div className="h-2.5 bg-brand-500" />
-        <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1.1fr)_340px]">
+        <div className="grid gap-6 p-6 2xl:grid-cols-[minmax(0,1fr)_420px]">
           <div className="space-y-4">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-700 dark:text-brand-300">
               Workspace setup
             </p>
             <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
-              Make the app feel like a real product for any company
+              Shape {workspaceProductName} for {workspaceOrganizationName}
             </h1>
             <p className="max-w-3xl text-sm leading-7 text-gray-600 dark:text-gray-300">
-              Configure workspace naming, logo, and candidate-facing form design. These settings
-              also scope local candidate history and pipeline views by workspace ID so one
-              company{"'"}s data is less likely to mix with another on the same deployment.
+              Customize the name, logo, and candidate-facing form so every applicant sees a
+              branded hiring experience that feels built for {workspaceOrganizationName}. These
+              settings also keep local candidate history and pipeline views scoped to this
+              workspace.
             </p>
           </div>
 
-          <div className="rounded-lg border border-gray-200 bg-gray-50 p-5 dark:border-gray-800 dark:bg-gray-900/70">
-            <p className="text-sm font-semibold text-gray-900 dark:text-white">
-              Current workspace
-            </p>
-            <div className="mt-4 space-y-3 text-sm text-gray-600 dark:text-gray-300">
-              <PreviewRow label="App" value={draft.appName} />
-              <PreviewRow label="Organization" value={draft.organizationName} />
-              <PreviewRow label="Workspace ID" value={draft.workspaceId} />
+          <div className="space-y-4">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-5 dark:border-gray-800 dark:bg-gray-900/70">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                Current workspace
+              </p>
+              <div className="mt-4 space-y-3 text-sm text-gray-600 dark:text-gray-300">
+                <PreviewRow label="App" value={draft.appName} />
+                <PreviewRow label="Organization" value={draft.organizationName} />
+                <PreviewRow label="Workspace ID" value={draft.workspaceId} />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <WorkspaceMetricCard
+                label="Active members"
+                value={String(activeMembers)}
+                caption={`${members.length} total`}
+              />
+              <WorkspaceMetricCard
+                label="Pending invites"
+                value={String(pendingMembers)}
+                caption="Awaiting access"
+              />
+              <WorkspaceMetricCard
+                label="Admin seats"
+                value={String(adminMembers)}
+                caption="Privileged access"
+              />
+              <WorkspaceMetricCard
+                label="Branding ready"
+                value={`${brandingReadinessCount}/3`}
+                caption="Tagline, logo, header"
+              />
             </div>
           </div>
         </div>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-        <article className="space-y-5 rounded-xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
+        <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
@@ -479,7 +515,7 @@ export default function WorkspaceSettingsPage() {
           </div>
         </article>
 
-        <article className="space-y-5 rounded-xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
+        <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
               Public form design
@@ -575,7 +611,7 @@ export default function WorkspaceSettingsPage() {
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-        <article className="space-y-5 rounded-xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
+        <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
               Members
@@ -643,7 +679,7 @@ export default function WorkspaceSettingsPage() {
           </div>
         </article>
 
-        <article className="space-y-5 rounded-xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
+        <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
               Security
@@ -716,7 +752,7 @@ export default function WorkspaceSettingsPage() {
         />
       </section>
 
-      <section className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between">
+      <section className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
           <p className="text-sm font-semibold text-gray-900 dark:text-white">
             Save workspace settings
@@ -762,6 +798,26 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-3">
       <span className="text-gray-500 dark:text-gray-400">{label}</span>
       <span className="truncate font-medium text-gray-900 dark:text-white">{value}</span>
+    </div>
+  );
+}
+
+function WorkspaceMetricCard({
+  label,
+  value,
+  caption,
+}: {
+  label: string;
+  value: string;
+  caption: string;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-4 py-4 dark:border-gray-800 dark:bg-gray-950/70">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{value}</p>
+      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{caption}</p>
     </div>
   );
 }

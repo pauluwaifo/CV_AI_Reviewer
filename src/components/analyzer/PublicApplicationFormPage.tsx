@@ -24,6 +24,7 @@ export default function PublicApplicationFormPage({
   } | null>(null);
 
   const workspace = form?.workspace ?? buildFallbackWorkspace();
+  const contactEmail = workspace.contactEmail?.trim().toLowerCase() ?? "";
   const theme = useMemo(
     () => buildPublicFormTheme(workspace.formAccent),
     [workspace.formAccent]
@@ -193,8 +194,31 @@ export default function PublicApplicationFormPage({
                 Your form has been submitted
               </h1>
               <p className="max-w-2xl text-sm leading-7" style={{ color: theme.body }}>
-                Your response has been received by {workspace.organizationName}. You can edit your
-                response and submit again if you need to correct anything.
+                Your application has been received by {workspace.organizationName}. Reference ID:{" "}
+                <span className="font-semibold" style={{ color: theme.title }}>
+                  {success.applicationId}
+                </span>
+                .
+              </p>
+              <p className="max-w-2xl text-sm leading-7" style={{ color: theme.body }}>
+                {contactEmail ? (
+                  <>
+                    If you need to correct or withdraw this submission, contact{" "}
+                    <a
+                      href={`mailto:${contactEmail}`}
+                      className="font-medium underline underline-offset-4"
+                      style={{ color: theme.accentHover }}
+                    >
+                      {contactEmail}
+                    </a>
+                    .
+                  </>
+                ) : (
+                  <>
+                    If you need to correct or withdraw this submission, contact the hiring team at{" "}
+                    {workspace.organizationName}.
+                  </>
+                )}
               </p>
               <button
                 type="button"
@@ -205,8 +229,11 @@ export default function PublicApplicationFormPage({
                 className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-medium text-white transition"
                 style={{ backgroundColor: theme.accent }}
               >
-                Edit response
+                Submit another response
               </button>
+              <p className="text-xs leading-6" style={{ color: theme.body }}>
+                Starting another response creates a new submission instead of editing the one above.
+              </p>
             </div>
           </section>
         </div>
@@ -280,9 +307,28 @@ export default function PublicApplicationFormPage({
                 Before you submit
               </p>
               <p className="mt-2 text-sm leading-7" style={{ color: theme.body }}>
-                Questions marked with an asterisk are required. Your application is screened
-                automatically first, then reviewed by the hiring team.
+                Questions marked with an asterisk are required. Your CV, answers, and contact
+                details will be stored in {workspace.organizationName}
+                {"'"}s hiring workspace so the team can review your application.
               </p>
+              <p className="mt-2 text-sm leading-7" style={{ color: theme.body }}>
+                Your application is screened automatically for role fit before recruiter review.
+                Automated screening helps prioritize review and does not make the final hiring
+                decision on its own.
+              </p>
+              {contactEmail ? (
+                <p className="mt-2 text-sm leading-7" style={{ color: theme.body }}>
+                  Questions about this submission or your data:{" "}
+                  <a
+                    href={`mailto:${contactEmail}`}
+                    className="font-medium underline underline-offset-4"
+                    style={{ color: theme.accentHover }}
+                  >
+                    {contactEmail}
+                  </a>
+                  .
+                </p>
+              ) : null}
             </div>
           </div>
         </section>
@@ -309,6 +355,32 @@ export default function PublicApplicationFormPage({
               <PublicFormFieldInput field={field} theme={theme} />
             </QuestionCard>
           ))}
+
+          <section
+            className="rounded-2xl bg-white p-5 sm:p-6"
+            style={{ border: `1px solid ${theme.border}`, boxShadow: theme.shadowSm }}
+          >
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                name="screeningConsent"
+                value="agreed"
+                required
+                className="mt-1 h-4 w-4 rounded border-slate-300"
+              />
+              <span className="space-y-2">
+                <span className="block text-sm font-medium leading-6" style={{ color: theme.title }}>
+                  I understand that my resume and answers will be stored and automatically screened
+                  for this role before recruiter review.
+                </span>
+                <span className="block text-sm leading-6" style={{ color: theme.body }}>
+                  {contactEmail
+                    ? `If I need to correct or withdraw my submission, I can contact ${contactEmail}.`
+                    : `If I need to correct or withdraw my submission, I should contact ${workspace.organizationName}'s hiring team.`}
+                </span>
+              </span>
+            </label>
+          </section>
 
           <div className="flex flex-col gap-3 px-1 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <button
@@ -591,6 +663,7 @@ function buildFallbackWorkspace(): WorkspacePublicSnapshot {
     organizationName: DEFAULT_WORKSPACE_SETTINGS.organizationName,
     tagline: DEFAULT_WORKSPACE_SETTINGS.tagline,
     workspaceId: DEFAULT_WORKSPACE_SETTINGS.workspaceId,
+    contactEmail: "",
     dashboardAccent: DEFAULT_WORKSPACE_SETTINGS.dashboardAccent,
     formAccent: DEFAULT_WORKSPACE_SETTINGS.formAccent,
     formHeaderImageDataUrl: DEFAULT_WORKSPACE_SETTINGS.formHeaderImageDataUrl,

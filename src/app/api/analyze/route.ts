@@ -5,6 +5,7 @@ import {
   DocumentAnalysisError,
   extractUploadTextFromFile,
 } from "@/lib/document-intelligence";
+import { createScreeningSession } from "@/lib/screening-session-store";
 import {
   createWorkspaceUnauthorizedResponse,
   requireWorkspaceApiSession,
@@ -21,7 +22,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
@@ -61,7 +62,24 @@ export async function POST(request: Request) {
       roleSetup,
     });
 
-    return NextResponse.json(payload);
+    const screening = await createScreeningSession({
+      workspaceId: session.workspaceId,
+      analysisGoal: mergedAnalysisGoal,
+      documentType,
+      provider,
+      roleSetup: roleSetup ?? {
+        title: "",
+        seniority: "",
+        location: "",
+        summary: "",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        interviewFocus: [],
+      },
+      response: payload,
+    });
+
+    return NextResponse.json({ screening });
   } catch (error) {
     if (error instanceof DocumentAnalysisError) {
       return NextResponse.json(

@@ -43,6 +43,17 @@ export async function POST(
 
     const formData = await request.formData();
     const resumeFile = formData.get("resumeFile");
+    const screeningConsent = String(formData.get("screeningConsent") || "").trim();
+
+    if (screeningConsent !== "agreed") {
+      return NextResponse.json(
+        {
+          error:
+            "Confirm that you understand this application will be stored and screened before you submit.",
+        },
+        { status: 400 }
+      );
+    }
 
     if (!(resumeFile instanceof File)) {
       return NextResponse.json(

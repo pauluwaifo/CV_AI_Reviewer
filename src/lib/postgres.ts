@@ -179,6 +179,27 @@ async function createSchema() {
       ON workspace_members (workspace_id, status, invited_at DESC)
     `,
     `
+    CREATE TABLE IF NOT EXISTS workspace_sessions (
+      token_hash TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin',
+      principal_type TEXT NOT NULL DEFAULT 'shared',
+      email TEXT NOT NULL DEFAULT '',
+      member_id TEXT NULL,
+      issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_workspace_sessions_workspace_expires_at
+      ON workspace_sessions (workspace_id, expires_at DESC)
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_workspace_sessions_expires_at
+      ON workspace_sessions (expires_at DESC)
+    `,
+    `
     CREATE TABLE IF NOT EXISTS hiring_forms (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -187,6 +208,7 @@ async function createSchema() {
       intro TEXT NOT NULL DEFAULT '',
       analysis_goal TEXT NOT NULL DEFAULT '',
       role_setup JSONB NOT NULL DEFAULT '{}'::jsonb,
+      screening_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
       custom_questions JSONB NOT NULL DEFAULT '[]'::jsonb,
       form_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
       workspace JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -209,6 +231,10 @@ async function createSchema() {
       ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT TRUE
     `,
     `
+    ALTER TABLE hiring_forms
+      ADD COLUMN IF NOT EXISTS screening_policy JSONB NOT NULL DEFAULT '{}'::jsonb
+    `,
+    `
     CREATE TABLE IF NOT EXISTS uploaded_files (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -223,6 +249,25 @@ async function createSchema() {
     `
     CREATE INDEX IF NOT EXISTS idx_uploaded_files_workspace_created_at
       ON uploaded_files (workspace_id, created_at DESC)
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS screening_sessions (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      analysis_goal TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      document_type TEXT NOT NULL DEFAULT 'cv',
+      provider TEXT NOT NULL DEFAULT 'auto',
+      recruiter_notes TEXT NOT NULL DEFAULT '',
+      recruiter_status TEXT NOT NULL DEFAULT 'New',
+      role_setup JSONB NOT NULL DEFAULT '{}'::jsonb,
+      response JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_screening_sessions_workspace_created_at
+      ON screening_sessions (workspace_id, created_at DESC)
     `,
     `
     CREATE TABLE IF NOT EXISTS hiring_applications (

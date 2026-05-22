@@ -12,5 +12,10 @@ export const metadata: Metadata = {
 export default async function HomePage() {
   const session = await getWorkspaceSession();
 
-  return <AnalyzerHomePage isAuthenticated={Boolean(session)} />;
+  return (
+    <AnalyzerHomePage
+      isAuthenticated={Boolean(session)}
+      canManageWorkspace={session?.role === "admin"}
+    />
+  );
 }

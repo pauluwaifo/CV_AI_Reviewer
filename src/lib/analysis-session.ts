@@ -1,10 +1,11 @@
 import type {
-  AnalysisProvider,
   AnalysisResponse,
+  AnalysisProvider,
   DocumentType,
   RecruiterStatus,
   RoleSetup,
 } from "@/types/document-intelligence";
+import type { StoredAnalysisSession } from "@/types/analysis-session";
 import {
   getWorkspaceScopedStorageKey,
   getWorkspaceStorageNamespaceFromWindow,
@@ -19,18 +20,6 @@ let cachedLatestParsedSession: StoredAnalysisSession | null = null;
 let cachedHistoryRawSession: string | null | undefined;
 let cachedHistoryParsedSession: StoredAnalysisSession[] | null = null;
 let hasAttachedStorageListener = false;
-
-export interface StoredAnalysisSession {
-  id: string;
-  analysisGoal: string;
-  createdAt: string;
-  documentType: DocumentType;
-  provider: AnalysisProvider;
-  recruiterNotes: string;
-  recruiterStatus: RecruiterStatus;
-  roleSetup: RoleSetup;
-  response: AnalysisResponse;
-}
 
 export function saveAnalysisSession(
   session: Omit<StoredAnalysisSession, "id"> | StoredAnalysisSession
@@ -296,6 +285,10 @@ function normalizeStoredSession(value: unknown): StoredAnalysisSession {
 
   return {
     id: parsed.id || buildAnalysisSessionId(parsed),
+    workspaceId:
+      typeof parsed.workspaceId === "string" && parsed.workspaceId.trim()
+        ? parsed.workspaceId
+        : getWorkspaceStorageNamespaceFromWindow(),
     analysisGoal: typeof parsed.analysisGoal === "string" ? parsed.analysisGoal : "",
     createdAt:
       typeof parsed.createdAt === "string"

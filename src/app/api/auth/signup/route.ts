@@ -5,7 +5,6 @@ import {
   applyWorkspaceSessionCookie,
   createWorkspaceSession,
   hashWorkspaceAccessKey,
-  isProvisionedWorkspace,
   normalizeNextPath,
 } from "@/lib/workspace-auth";
 import { saveWorkspaceSettings } from "@/lib/workspace-settings-store";
@@ -78,16 +77,6 @@ export async function POST(request: Request) {
       );
     }
 
-    if (isProvisionedWorkspace(workspaceId)) {
-      return NextResponse.json(
-        {
-          error:
-            "That workspace ID is reserved by an existing deployment configuration. Choose a different ID.",
-        },
-        { status: 409 }
-      );
-    }
-
     await createWorkspaceAccessRecord({
       workspaceId,
       contactEmail,
@@ -103,7 +92,13 @@ export async function POST(request: Request) {
       workspaceId,
     });
     const { token, maxAgeSeconds, session } = await createWorkspaceSession(
-      workspaceId,
+      {
+        workspaceId,
+        role: "admin",
+        principalType: "shared",
+        email: contactEmail,
+        memberId: null,
+      },
       keepSignedIn
     );
     const response = NextResponse.json({

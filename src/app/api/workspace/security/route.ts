@@ -3,8 +3,10 @@ import { NextResponse } from "next/server";
 import { updateWorkspaceAccessKeyHash } from "@/lib/workspace-access-store";
 import { generateWorkspaceAccessKey } from "@/lib/workspace-access-key";
 import {
+  createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
   hashWorkspaceAccessKey,
+  isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
 
@@ -12,10 +14,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
+  }
+
+  if (!isWorkspaceAdminSession(session)) {
+    return createWorkspaceForbiddenResponse();
   }
 
   try {

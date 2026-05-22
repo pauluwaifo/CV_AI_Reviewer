@@ -10,6 +10,6 @@ export const metadata: Metadata = {
 };
 
 export default async function WorkspacePage() {
-  await requireWorkspacePageSession("/workspace");
+  await requireWorkspacePageSession("/workspace", { role: "admin" });
   return <WorkspaceSettingsPage />;
 }

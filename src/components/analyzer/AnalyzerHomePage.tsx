@@ -69,15 +69,26 @@ const sparkles = [
 
 export default function AnalyzerHomePage({
   isAuthenticated = false,
+  canManageWorkspace = false,
 }: {
   isAuthenticated?: boolean;
+  canManageWorkspace?: boolean;
 }) {
   const { settings } = useWorkspace();
   const theme = buildPublicFormTheme(settings.dashboardAccent);
   const accentRgb = toRgb(settings.dashboardAccent);
   const accentDeepRgb = toRgb(theme.accentHover);
   const primaryHref = isAuthenticated ? "/pipeline" : "/signup?next=%2Fworkspace";
-  const secondaryHref = isAuthenticated ? "/workspace" : "/signin?next=%2Fpipeline";
+  const secondaryHref = isAuthenticated
+    ? canManageWorkspace
+      ? "/workspace"
+      : "/pipeline"
+    : "/signin?next=%2Fpipeline";
+  const secondaryLabel = isAuthenticated
+    ? canManageWorkspace
+      ? "Workspace Settings"
+      : "Open Pipeline"
+    : "Sign In";
 
   return (
     <div
@@ -210,7 +221,7 @@ export default function AnalyzerHomePage({
                   href={secondaryHref}
                   className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-white/12 px-7 py-4 text-base font-medium text-white/84 transition hover:bg-white/6 hover:text-white"
                 >
-                  {isAuthenticated ? "Workspace Settings" : "Sign In"}
+                  {secondaryLabel}
                 </Link>
               </div>
             </div>
@@ -444,7 +455,11 @@ export default function AnalyzerHomePage({
                   href={secondaryHref}
                   className="inline-flex items-center justify-center rounded-full border border-white/12 px-5 py-3 text-sm font-medium text-white/84 transition hover:bg-white/6 hover:text-white"
                 >
-                  {isAuthenticated ? "Customize workspace" : "Sign in"}
+                  {isAuthenticated
+                    ? canManageWorkspace
+                      ? "Customize workspace"
+                      : "Open pipeline"
+                    : "Sign in"}
                 </Link>
                 <Link
                   href={primaryHref}
@@ -500,7 +515,7 @@ export default function AnalyzerHomePage({
                   href: primaryHref,
                 },
                 {
-                  label: isAuthenticated ? "Workspace Settings" : "Sign In",
+                  label: secondaryLabel,
                   href: secondaryHref,
                 },
                 { label: "Contacts", href: "#contact" },
@@ -509,7 +524,14 @@ export default function AnalyzerHomePage({
             <FooterColumn
               title="Product"
               items={[
-                { label: "Form Setup", href: isAuthenticated ? "/workspace" : "/signup" },
+                {
+                  label: "Form Setup",
+                  href: isAuthenticated
+                    ? canManageWorkspace
+                      ? "/workspace"
+                      : "/pipeline"
+                    : "/signup",
+                },
                 { label: "Pipeline", href: isAuthenticated ? "/pipeline" : "/signin" },
                 { label: "Applicant Forms", href: "#platform" },
               ]}

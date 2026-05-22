@@ -20,6 +20,9 @@ import {
   updateLocalHiringForm,
 } from "@/lib/local-hiring-funnel-store";
 import {
+  normalizeHiringFormScreeningPolicy,
+} from "@/lib/hiring-screening-policy";
+import {
   isPostgresConfigured,
   queryPostgres,
   withPostgresTransaction,
@@ -29,6 +32,7 @@ import {
   getWorkspacePublicSnapshot,
   sanitizeWorkspaceId,
 } from "@/lib/workspace-settings";
+import { getWorkspaceAccessRecord } from "@/lib/workspace-access-store";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 import type { AnalysisResponse, RoleSetup, UploadSourceKind } from "@/types/document-intelligence";
 import type {
@@ -41,6 +45,7 @@ import type {
   HiringFormListItem,
   HiringFormQuestion,
   HiringFormRecord,
+  HiringFormScreeningPolicy,
   PublicHiringForm,
   StoredResumeFile,
   WorkspacePublicSnapshot,
@@ -172,9 +177,14 @@ export async function getPublicHiringForm(
   }
 
   const form = toFormRecordFromRow(row);
-  const workspace = getWorkspacePublicSnapshot(
-    await getWorkspaceSettings(form.workspaceId)
-  );
+  const [settings, accessRecord] = await Promise.all([
+    getWorkspaceSettings(form.workspaceId),
+    getWorkspaceAccessRecord(form.workspaceId),
+  ]);
+  const workspace = {
+    ...getWorkspacePublicSnapshot(settings),
+    contactEmail: accessRecord?.contactEmail ?? "",
+  };
 
   return {
     id: form.id,
@@ -220,6 +230,7 @@ export async function createHiringForm({
   intro,
   analysisGoal,
   roleSetup,
+  screeningPolicy,
   customQuestions,
   formFields,
   expiresAt,
@@ -232,6 +243,7 @@ export async function createHiringForm({
   intro: string;
   analysisGoal: string;
   roleSetup: RoleSetup;
+  screeningPolicy: HiringFormScreeningPolicy;
   customQuestions: HiringFormQuestion[];
   formFields: HiringFormField[];
   expiresAt: string | null;
@@ -246,6 +258,7 @@ export async function createHiringForm({
       intro,
       analysisGoal,
       roleSetup,
+      screeningPolicy,
       customQuestions,
       formFields,
       expiresAt,
@@ -264,6 +277,7 @@ export async function createHiringForm({
     intro,
     analysisGoal,
     roleSetup,
+    screeningPolicy: normalizeHiringFormScreeningPolicy(screeningPolicy),
     customQuestions,
     formFields: normalizeFormFields(formFields, customQuestions),
     createdAt: new Date().toISOString(),
@@ -282,6 +296,7 @@ export async function createHiringForm({
         intro,
         analysis_goal,
         role_setup,
+        screening_policy,
         custom_questions,
         form_fields,
         workspace,
@@ -292,8 +307,8 @@ export async function createHiringForm({
       )
       VALUES (
         $1, $2, $3, $4, $5, $6,
-        $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-        $11::timestamptz, $12::timestamptz, $13, $14::jsonb
+        $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb,
+        $12::timestamptz, $13::timestamptz, $14, $15::jsonb
       )
     `,
     [
@@ -304,6 +319,7 @@ export async function createHiringForm({
       form.intro,
       form.analysisGoal,
       JSON.stringify(form.roleSetup),
+      JSON.stringify(form.screeningPolicy),
       JSON.stringify(form.customQuestions),
       JSON.stringify(form.formFields),
       JSON.stringify(form.workspace),
@@ -325,9 +341,11 @@ export async function updateHiringForm({
   intro,
   analysisGoal,
   roleSetup,
+  screeningPolicy,
   customQuestions,
   formFields,
   expiresAt,
+  jdAttachment,
   published,
 }: {
   formId: string;
@@ -337,9 +355,11 @@ export async function updateHiringForm({
   intro: string;
   analysisGoal: string;
   roleSetup: RoleSetup;
+  screeningPolicy: HiringFormScreeningPolicy;
   customQuestions: HiringFormQuestion[];
   formFields: HiringFormField[];
   expiresAt: string | null;
+  jdAttachment: HiringFormJdAttachment | null;
   published?: boolean;
 }) {
   if (!isPostgresConfigured()) {
@@ -351,9 +371,11 @@ export async function updateHiringForm({
       intro,
       analysisGoal,
       roleSetup,
+      screeningPolicy,
       customQuestions,
       formFields,
       expiresAt,
+      jdAttachment,
       published,
     });
   }
@@ -375,10 +397,12 @@ export async function updateHiringForm({
           intro = $5,
           analysis_goal = $6,
           role_setup = $7::jsonb,
-          custom_questions = $8::jsonb,
-          form_fields = $9::jsonb,
-          expires_at = $10::timestamptz,
-          published = $11
+          screening_policy = $8::jsonb,
+          custom_questions = $9::jsonb,
+          form_fields = $10::jsonb,
+          expires_at = $11::timestamptz,
+          jd_attachment = $12::jsonb,
+          published = $13
       WHERE id = $1 AND workspace_id = $2
       RETURNING *
     `,
@@ -390,9 +414,11 @@ export async function updateHiringForm({
       intro,
       analysisGoal,
       JSON.stringify(roleSetup),
+      JSON.stringify(normalizeHiringFormScreeningPolicy(screeningPolicy)),
       JSON.stringify(customQuestions),
       JSON.stringify(normalizeFormFields(formFields, customQuestions)),
       expiresAt,
+      jdAttachment ? JSON.stringify(jdAttachment) : null,
       published ?? existing.published,
     ]
   );
@@ -423,9 +449,11 @@ export async function setHiringFormPublished({
     intro: form.intro,
     analysisGoal: form.analysisGoal,
     roleSetup: form.roleSetup,
+    screeningPolicy: form.screeningPolicy,
     customQuestions: form.customQuestions,
     formFields: form.formFields,
     expiresAt: form.expiresAt,
+    jdAttachment: form.jdAttachment,
     published,
   });
 }
@@ -838,6 +866,7 @@ async function insertFormRecord(client: PoolClient, form: HiringFormRecord) {
         intro,
         analysis_goal,
         role_setup,
+        screening_policy,
         custom_questions,
         form_fields,
         workspace,
@@ -848,8 +877,8 @@ async function insertFormRecord(client: PoolClient, form: HiringFormRecord) {
       )
       VALUES (
         $1, $2, $3, $4, $5, $6,
-        $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-        $11::timestamptz, $12::timestamptz, $13, $14::jsonb
+        $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb,
+        $12::timestamptz, $13::timestamptz, $14, $15::jsonb
       )
       ON CONFLICT (id) DO NOTHING
     `,
@@ -861,6 +890,7 @@ async function insertFormRecord(client: PoolClient, form: HiringFormRecord) {
       form.intro,
       form.analysisGoal,
       JSON.stringify(form.roleSetup),
+      JSON.stringify(normalizeHiringFormScreeningPolicy(form.screeningPolicy)),
       JSON.stringify(form.customQuestions),
       JSON.stringify(form.formFields),
       JSON.stringify(normalizeWorkspaceSnapshot(form.workspace)),
@@ -932,6 +962,7 @@ function toFormRecordFromRow(row: DbFormRow): HiringFormRecord {
     intro: row.intro ?? "",
     analysisGoal: row.analysis_goal ?? "",
     roleSetup: normalizeRoleSetup(row.role_setup),
+    screeningPolicy: normalizeHiringFormScreeningPolicy(row.screening_policy),
     customQuestions: normalizeCustomQuestions(row.custom_questions),
     formFields: normalizeFormFields(
       row.form_fields,
@@ -1273,6 +1304,7 @@ type DbFormRow = QueryResultRow & {
   published: boolean | null;
   analysis_goal: string | null;
   role_setup: unknown;
+  screening_policy: unknown;
   team: string | null;
   title: string | null;
   workspace: unknown;

@@ -105,8 +105,8 @@ export default function SignUpForm({
                   Set up your company workspace
                 </h1>
                 <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
-                  Create a secure hiring workspace for your team, choose a workspace ID, and set the
-                  access key your company will use to sign in.
+                  Create a secure hiring workspace for your team, choose a workspace ID, and set
+                  the shared admin access key your company will use to manage the workspace.
                 </p>
               </div>
             </div>
@@ -165,7 +165,7 @@ export default function SignUpForm({
                     onChange={(event) => setAccessKey(event.target.value)}
                     type={showAccessKey ? "text" : "password"}
                     className={`${inputClassName} pr-12`}
-                    placeholder="Create a secure access key"
+                    placeholder="Create a shared admin access key"
                     autoComplete="new-password"
                   />
                   <button

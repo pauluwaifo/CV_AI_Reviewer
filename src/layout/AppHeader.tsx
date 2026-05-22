@@ -14,6 +14,10 @@ type AppHeaderProps = {
     workspaceId: string;
     expiresAt: string;
     issuedAt: string;
+    role: "admin" | "member";
+    principalType: "shared" | "member";
+    email: string;
+    memberId: string | null;
   } | null;
 };
 

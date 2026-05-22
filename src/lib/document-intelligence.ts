@@ -7,6 +7,10 @@ import { PDFParse } from "pdf-parse";
 
 import { buildLocalAnalysis } from "@/lib/local-document-analysis";
 import type {
+  HiringFormField,
+  HiringFormFieldType,
+} from "@/types/hiring-funnel";
+import type {
   AnalysisProvider,
   AnalysisResponse,
   AnalysisResult,
@@ -327,6 +331,155 @@ export async function analyzeUpload({
 }
 
 export const analyzePdfUpload = analyzeUpload;
+
+export async function generateJobDescriptionDraft({
+  title,
+  team,
+  intro,
+  analysisGoal,
+  roleSetup,
+  provider = "auto",
+}: {
+  title?: string;
+  team?: string;
+  intro?: string;
+  analysisGoal?: string;
+  roleSetup?: RoleSetup;
+  provider?: AnalysisProvider;
+}): Promise<{
+  jobDescription: string;
+  provider: ResolvedProvider;
+  providerDetail?: string;
+  providerWarnings: string[];
+}> {
+  const localDraft = buildLocalJobDescriptionDraft({
+    title,
+    team,
+    intro,
+    analysisGoal,
+    roleSetup,
+  });
+
+  try {
+    const providerResult = await withProviderFallback(
+      provider,
+      async (activeProvider) => {
+        const state: ProviderRunState = {};
+        const raw = await generateWithProvider(
+          activeProvider,
+          state,
+          buildJobDescriptionPrompt({
+            title,
+            team,
+            intro,
+            analysisGoal,
+            roleSetup,
+          })
+        );
+        const parsed = parseLooseJson(raw) as { jobDescription?: unknown };
+
+        return {
+          detail: state.detail,
+          value: normalizeGeneratedJobDescription(
+            parsed.jobDescription,
+            localDraft
+          ),
+        };
+      }
+    );
+
+    return {
+      jobDescription: providerResult.value,
+      provider: providerResult.provider,
+      providerDetail: providerResult.detail || undefined,
+      providerWarnings: providerResult.warnings,
+    };
+  } catch (error) {
+    return {
+      jobDescription: localDraft,
+      provider: "local",
+      providerWarnings: extractProviderWarnings(error),
+    };
+  }
+}
+
+export async function generateHiringFormDraft({
+  title,
+  team,
+  intro,
+  analysisGoal,
+  roleSetup,
+  prompt,
+  provider = "auto",
+}: {
+  title?: string;
+  team?: string;
+  intro?: string;
+  analysisGoal?: string;
+  roleSetup?: RoleSetup;
+  prompt?: string;
+  provider?: AnalysisProvider;
+}): Promise<{
+  draft: {
+    title: string;
+    team: string;
+    intro: string;
+    analysisGoal: string;
+    roleSetup: RoleSetup;
+    formFields: HiringFormField[];
+  };
+  provider: ResolvedProvider;
+  providerDetail?: string;
+  providerWarnings: string[];
+}> {
+  const localDraft = buildLocalHiringFormDraft({
+    title,
+    team,
+    intro,
+    analysisGoal,
+    roleSetup,
+    prompt,
+  });
+
+  try {
+    const providerResult = await withProviderFallback(
+      provider,
+      async (activeProvider) => {
+        const state: ProviderRunState = {};
+        const raw = await generateWithProvider(
+          activeProvider,
+          state,
+          buildHiringFormDraftPrompt({
+            title,
+            team,
+            intro,
+            analysisGoal,
+            roleSetup,
+            prompt,
+          })
+        );
+
+        return {
+          detail: state.detail,
+          value: normalizeGeneratedHiringFormDraft(parseLooseJson(raw), localDraft),
+        };
+      }
+    );
+
+    return {
+      draft: providerResult.value,
+      provider: providerResult.provider,
+      providerDetail: providerResult.detail || undefined,
+      providerWarnings: providerResult.warnings,
+    };
+  } catch (error) {
+    return {
+      draft: localDraft,
+      provider: "local",
+      providerWarnings: extractProviderWarnings(error),
+    };
+  }
+}
 
 export async function extractUploadTextFromFile(file: File) {
   const buffer = Buffer.from(await file.arrayBuffer());
@@ -1382,6 +1535,118 @@ ${JSON.stringify(digests, null, 2)}
 `.trim();
 }
 
+function buildJobDescriptionPrompt({
+  title,
+  team,
+  intro,
+  analysisGoal,
+  roleSetup,
+}: {
+  title?: string;
+  team?: string;
+  intro?: string;
+  analysisGoal?: string;
+  roleSetup?: RoleSetup;
+}) {
+  return `
+You are writing a professional, candidate-facing job description for a hiring form.
+
+Form title: ${title?.trim() || "Not provided"}
+Team: ${team?.trim() || "Not provided"}
+Public intro: ${intro?.trim() || "Not provided"}
+Hiring brief: ${analysisGoal?.trim() || "Not provided"}
+Structured role brief:
+${formatRoleSetup(roleSetup)}
+
+Return strict JSON with this shape:
+{
+  "jobDescription": "Plain-text job description"
+}
+
+Rules:
+- Write a polished job description in plain text, not markdown tables.
+- Include short section headings in the text.
+- Cover: Role overview, Responsibilities, Must-have requirements, Nice-to-have skills, Interview focus, and Location/work arrangement if known.
+- Use simple bullet-style lines beginning with "- " where helpful.
+- Keep it grounded in the inputs above.
+- Do not invent salary, benefits, compliance claims, or tools that were not provided.
+- Keep the tone professional and concise.
+- Target roughly 300 to 550 words.
+- Output valid JSON only with double quotes.
+`.trim();
+}
+
+function buildHiringFormDraftPrompt({
+  title,
+  team,
+  intro,
+  analysisGoal,
+  roleSetup,
+  prompt,
+}: {
+  title?: string;
+  team?: string;
+  intro?: string;
+  analysisGoal?: string;
+  roleSetup?: RoleSetup;
+  prompt?: string;
+}) {
+  return `
+You are designing a professional candidate application form for a hiring workflow.
+
+Current form title: ${title?.trim() || "Not provided"}
+Team: ${team?.trim() || "Not provided"}
+Current public intro: ${intro?.trim() || "Not provided"}
+Current screening brief: ${analysisGoal?.trim() || "Not provided"}
+Structured role brief:
+${formatRoleSetup(roleSetup)}
+Extra instruction:
+${prompt?.trim() || "No extra instruction provided."}
+
+Return strict JSON with this shape:
+{
+  "title": "Candidate-facing form title",
+  "team": "Team name or blank",
+  "intro": "1-3 sentence public description",
+  "analysisGoal": "Short internal screening brief",
+  "roleSetup": {
+    "title": "Role title",
+    "seniority": "Seniority",
+    "location": "Location or work arrangement",
+    "summary": "Short role summary",
+    "mustHaveSkills": ["skill"],
+    "niceToHaveSkills": ["skill"],
+    "interviewFocus": ["focus area"]
+  },
+  "formFields": [
+    {
+      "id": "field-1",
+      "label": "Question label",
+      "type": "short_text | long_text | phone | url | number | date | multiple_choice | checkboxes | dropdown",
+      "required": true,
+      "placeholder": "Optional placeholder",
+      "helper": "Optional helper text",
+      "options": ["Option A", "Option B"],
+      "systemKey": "phone | location | linkedIn | portfolio | yearsExperience | noticePeriod | salaryExpectation | coverNote"
+    }
+  ]
+}
+
+Rules:
+- Create an editable hiring form draft, not a template explanation.
+- Generate 4 to 8 fields beyond the built-in full name, email, and CV upload fields.
+- Do not include full name, email, or resume upload fields because the system adds those automatically.
+- Reuse standard systemKey values when a field maps cleanly to common candidate profile data.
+- Use custom questions for role-specific evidence, project examples, motivation, availability, or scenario responses.
+- Keep the form practical, concise, and professional.
+- Use only the allowed field types listed above.
+- For multiple_choice, checkboxes, or dropdown fields, include 2 to 6 useful options.
+- Keep placeholders and helper text short.
+- Keep the output grounded in the role context instead of inventing benefits, salary, or unsupported requirements.
+- Output valid JSON only with double quotes and no markdown fences.
+`.trim();
+}
+
 function buildSharedInstructions(
   provider: RemoteProvider,
   documentType: DocumentType,
@@ -1722,6 +1987,612 @@ function buildBreakdownSchema(documentType: DocumentType) {
     '{ "category": "Completeness", "score": 0, "note": "brief note" },',
     '{ "category": "Risk", "score": 0, "note": "brief note" }',
   ].join("\n      ");
+}
+
+function normalizeGeneratedJobDescription(value: unknown, fallback: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.replace(/\r/g, "").trim();
+  return normalized.length >= 180 ? normalized : fallback;
+}
+
+function normalizeGeneratedHiringFormDraft(
+  value: unknown,
+  fallback: {
+    title: string;
+    team: string;
+    intro: string;
+    analysisGoal: string;
+    roleSetup: RoleSetup;
+    formFields: HiringFormField[];
+  }
+) {
+  if (!value || typeof value !== "object") {
+    return fallback;
+  }
+
+  const parsed = value as Record<string, unknown>;
+
+  return {
+    title: firstNonEmpty(asNonEmptyString(parsed.title), fallback.title),
+    team: asNonEmptyString(parsed.team) || fallback.team,
+    intro: firstNonEmpty(asNonEmptyString(parsed.intro), fallback.intro),
+    analysisGoal:
+      firstNonEmpty(asNonEmptyString(parsed.analysisGoal), fallback.analysisGoal),
+    roleSetup: normalizeGeneratedRoleSetup(parsed.roleSetup, fallback.roleSetup),
+    formFields: normalizeGeneratedFormFields(parsed.formFields, fallback.formFields),
+  };
+}
+
+function buildLocalJobDescriptionDraft({
+  title,
+  team,
+  intro,
+  analysisGoal,
+  roleSetup,
+}: {
+  title?: string;
+  team?: string;
+  intro?: string;
+  analysisGoal?: string;
+  roleSetup?: RoleSetup;
+}) {
+  const resolvedTitle =
+    roleSetup?.title?.trim() || title?.trim() || "Open role";
+  const resolvedLocation = roleSetup?.location?.trim() || "";
+  const overview =
+    firstNonEmpty(intro, roleSetup?.summary, analysisGoal) ||
+    `We are hiring a ${resolvedTitle} to take ownership of meaningful day-to-day work, collaborate well with teammates, and deliver consistently strong execution.`;
+  const mustHave =
+    roleSetup?.mustHaveSkills?.filter(Boolean) ?? [];
+  const niceToHave =
+    roleSetup?.niceToHaveSkills?.filter(Boolean) ?? [];
+  const interviewFocus =
+    roleSetup?.interviewFocus?.filter(Boolean) ?? [];
+
+  const responsibilityBullets = uniqueStringList([
+    `Own the core responsibilities of the ${resolvedTitle} role and deliver high-quality work consistently.`,
+    firstSentenceAsBullet(roleSetup?.summary),
+    firstSentenceAsBullet(analysisGoal),
+    `Collaborate effectively with teammates and communicate progress, blockers, and outcomes clearly.`,
+    resolvedLocation
+      ? `Work successfully within the expected ${resolvedLocation} setup and keep delivery aligned with team expectations.`
+      : "",
+  ]).slice(0, 4);
+
+  const requirementBullets = mustHave.length > 0
+    ? mustHave.map((item) => `Demonstrated strength in ${item}.`)
+    : [
+        `Relevant experience that supports success as a ${resolvedTitle}.`,
+        "Clear communication, ownership, and reliable execution.",
+      ];
+
+  const niceToHaveBullets = niceToHave.length > 0
+    ? niceToHave.map((item) => `Experience with ${item}.`)
+    : ["Additional related tools, domain context, or adjacent experience."];
+
+  const interviewBullets = interviewFocus.length > 0
+    ? interviewFocus.map((item) => `We will explore ${item.toLowerCase()} during interviews.`)
+    : [
+        "We will assess problem-solving, communication, and practical role fit during interviews.",
+      ];
+
+  return [
+    resolvedTitle,
+    team?.trim() ? `Team: ${team.trim()}` : "",
+    resolvedLocation ? `Location: ${resolvedLocation}` : "",
+    "",
+    "Role overview",
+    overview,
+    "",
+    "Responsibilities",
+    ...responsibilityBullets.map((item) => `- ${item}`),
+    "",
+    "Must-have requirements",
+    ...requirementBullets.map((item) => `- ${item}`),
+    "",
+    "Nice-to-have skills",
+    ...niceToHaveBullets.map((item) => `- ${item}`),
+    "",
+    "Interview focus",
+    ...interviewBullets.map((item) => `- ${item}`),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildLocalHiringFormDraft({
+  title,
+  team,
+  intro,
+  analysisGoal,
+  roleSetup,
+  prompt,
+}: {
+  title?: string;
+  team?: string;
+  intro?: string;
+  analysisGoal?: string;
+  roleSetup?: RoleSetup;
+  prompt?: string;
+}) {
+  const resolvedRoleTitle =
+    firstNonEmpty(roleSetup?.title, title) || "Open role";
+  const resolvedTeam = team?.trim() || "";
+  const resolvedSummary =
+    firstNonEmpty(roleSetup?.summary, analysisGoal, prompt) ||
+    `We are hiring a ${resolvedRoleTitle} and want candidates to show relevant experience, strong execution, and clear communication.`;
+  const resolvedRoleSetup: RoleSetup = {
+    title: resolvedRoleTitle,
+    seniority: firstNonEmpty(roleSetup?.seniority, inferSeniorityFromText(prompt, analysisGoal)),
+    location: firstNonEmpty(roleSetup?.location, inferLocationFromText(prompt, analysisGoal)),
+    summary: resolvedSummary,
+    mustHaveSkills:
+      roleSetup?.mustHaveSkills?.filter(Boolean) ??
+      [],
+    niceToHaveSkills:
+      roleSetup?.niceToHaveSkills?.filter(Boolean) ??
+      [],
+    interviewFocus:
+      roleSetup?.interviewFocus?.filter(Boolean) ??
+      [],
+  };
+  const formKind = inferGeneratedFormKind({
+    title,
+    analysisGoal,
+    prompt,
+    roleSetup: resolvedRoleSetup,
+  });
+
+  return {
+    title:
+      firstNonEmpty(title, resolvedRoleSetup.title) ||
+      `${resolvedRoleTitle} application`,
+    team: resolvedTeam,
+    intro:
+      firstNonEmpty(
+        intro,
+        buildLocalFormIntro(resolvedRoleTitle, resolvedRoleSetup.location, prompt)
+      ) || `Apply for the ${resolvedRoleTitle} role.`,
+    analysisGoal:
+      firstNonEmpty(
+        analysisGoal,
+        buildLocalAnalysisGoal(resolvedRoleTitle, resolvedRoleSetup)
+      ) || `Screen applicants for ${resolvedRoleTitle}.`,
+    roleSetup: resolvedRoleSetup,
+    formFields: buildLocalGeneratedFormFields(formKind, resolvedRoleTitle, resolvedRoleSetup),
+  };
+}
+
+function buildLocalGeneratedFormFields(
+  kind: "technical" | "customer" | "general",
+  roleTitle: string,
+  roleSetup: RoleSetup
+) {
+  const mustHaveSkillLine = roleSetup.mustHaveSkills.slice(0, 4).join(", ");
+  const interviewFocusLine = roleSetup.interviewFocus.slice(0, 3).join(", ");
+
+  if (kind === "technical") {
+    return [
+      createGeneratedFormField("phone", "Phone number", "phone", false, {
+        placeholder: "e.g. +234...",
+        helper: "Used for recruiter follow-up.",
+        systemKey: "phone",
+      }),
+      createGeneratedFormField("location", "Location", "short_text", false, {
+        placeholder: "City / remote base",
+        systemKey: "location",
+      }),
+      createGeneratedFormField("portfolio", "GitHub, portfolio, or website", "url", false, {
+        placeholder: "https://",
+        systemKey: "portfolio",
+      }),
+      createGeneratedFormField("experience", "Years of relevant experience", "short_text", false, {
+        placeholder: "e.g. 4+ years",
+        systemKey: "yearsExperience",
+      }),
+      createGeneratedFormField("core-skills", `Which core tools or technologies are you strongest with for this ${roleTitle} role?`, "long_text", true, {
+        placeholder:
+          mustHaveSkillLine || "Share the tools, systems, languages, or platforms you use most confidently.",
+        helper: mustHaveSkillLine
+          ? `Prioritize examples tied to: ${mustHaveSkillLine}.`
+          : "",
+      }),
+      createGeneratedFormField("project-proof", "Describe one technical project or problem you solved that best proves your fit.", "long_text", true, {
+        placeholder: "Explain the challenge, what you owned, and the outcome.",
+      }),
+      createGeneratedFormField("availability", "When can you start?", "dropdown", false, {
+        options: ["Immediately", "2 weeks", "1 month", "2+ months"],
+        helper: "Choose the most realistic option.",
+      }),
+    ];
+  }
+
+  if (kind === "customer") {
+    return [
+      createGeneratedFormField("phone", "Phone number", "phone", false, {
+        placeholder: "e.g. +234...",
+        helper: "Used for recruiter follow-up.",
+        systemKey: "phone",
+      }),
+      createGeneratedFormField("location", "Location", "short_text", false, {
+        placeholder: "City / state",
+        systemKey: "location",
+      }),
+      createGeneratedFormField("experience", "Years of customer-facing experience", "short_text", false, {
+        placeholder: "e.g. 3 years",
+        systemKey: "yearsExperience",
+      }),
+      createGeneratedFormField("service-scenario", "Describe a difficult customer situation you handled well.", "long_text", true, {
+        placeholder: "Explain what happened, your response, and the result.",
+      }),
+      createGeneratedFormField("communication-style", "What makes your communication style effective with customers or stakeholders?", "long_text", true, {
+        placeholder:
+          interviewFocusLine || "Share practical examples of how you communicate clearly and calmly.",
+      }),
+      createGeneratedFormField("schedule", "Are you available for shifts, weekends, or public holidays if needed?", "multiple_choice", false, {
+        options: ["Yes", "No", "Depends on schedule"],
+      }),
+      createGeneratedFormField("notice", "Notice period", "short_text", false, {
+        placeholder: "e.g. Immediate, 2 weeks",
+        systemKey: "noticePeriod",
+      }),
+    ];
+  }
+
+  return [
+    createGeneratedFormField("phone", "Phone number", "phone", false, {
+      placeholder: "e.g. +234...",
+      helper: "Used for recruiter follow-up.",
+      systemKey: "phone",
+    }),
+    createGeneratedFormField("location", "Location", "short_text", false, {
+      placeholder: "City / state",
+      systemKey: "location",
+    }),
+    createGeneratedFormField("linkedin", "LinkedIn profile", "url", false, {
+      placeholder: "https://linkedin.com/in/...",
+      systemKey: "linkedIn",
+    }),
+    createGeneratedFormField("experience", "Years of relevant experience", "short_text", false, {
+      placeholder: "e.g. 5 years",
+      systemKey: "yearsExperience",
+    }),
+    createGeneratedFormField("motivation", `Why are you interested in this ${roleTitle} role?`, "long_text", true, {
+      placeholder: "Tell us what makes this role a strong fit for you.",
+    }),
+    createGeneratedFormField("evidence", "Share one achievement, project, or responsibility that best supports your fit.", "long_text", true, {
+      placeholder:
+        mustHaveSkillLine || "Include measurable outcomes where possible.",
+    }),
+    createGeneratedFormField("notice", "Notice period", "short_text", false, {
+      placeholder: "e.g. Immediate, 2 weeks",
+      systemKey: "noticePeriod",
+    }),
+    createGeneratedFormField("salary", "Salary expectation", "short_text", false, {
+      placeholder: "Optional",
+      systemKey: "salaryExpectation",
+    }),
+  ];
+}
+
+function createGeneratedFormField(
+  id: string,
+  label: string,
+  type: HiringFormFieldType,
+  required: boolean,
+  options?: {
+    placeholder?: string;
+    helper?: string;
+    systemKey?: HiringFormField["systemKey"];
+    fieldOptions?: string[];
+    options?: string[];
+  }
+): HiringFormField {
+  const choiceOptions =
+    options?.fieldOptions ?? options?.options ?? [];
+
+  return {
+    id: `generated-${id}`,
+    label,
+    placeholder: options?.placeholder || "",
+    helper: options?.helper || "",
+    required,
+    type,
+    options: isGeneratedChoiceFieldType(type) ? normalizeGeneratedFieldOptions(choiceOptions) : [],
+    ...(options?.systemKey ? { systemKey: options.systemKey } : {}),
+  };
+}
+
+function normalizeGeneratedRoleSetup(value: unknown, fallback: RoleSetup): RoleSetup {
+  const parsed = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+
+  return {
+    title: firstNonEmpty(asNonEmptyString(parsed.title), fallback.title),
+    seniority: asNonEmptyString(parsed.seniority) || fallback.seniority,
+    location: asNonEmptyString(parsed.location) || fallback.location,
+    summary: firstNonEmpty(asNonEmptyString(parsed.summary), fallback.summary),
+    mustHaveSkills: normalizeGeneratedStringList(parsed.mustHaveSkills, fallback.mustHaveSkills),
+    niceToHaveSkills: normalizeGeneratedStringList(
+      parsed.niceToHaveSkills,
+      fallback.niceToHaveSkills
+    ),
+    interviewFocus: normalizeGeneratedStringList(
+      parsed.interviewFocus,
+      fallback.interviewFocus
+    ),
+  };
+}
+
+function normalizeGeneratedFormFields(
+  value: unknown,
+  fallback: HiringFormField[]
+): HiringFormField[] {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+
+  const seenSystemKeys = new Set<string>();
+  const normalized = value
+    .map((item, index) => normalizeGeneratedFormField(item, index))
+    .filter((item): item is HiringFormField => item !== null)
+    .filter((item) => {
+      if (!item.systemKey) {
+        return true;
+      }
+
+      if (seenSystemKeys.has(item.systemKey)) {
+        return false;
+      }
+
+      seenSystemKeys.add(item.systemKey);
+      return true;
+    })
+    .slice(0, 10);
+
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function normalizeGeneratedFormField(
+  value: unknown,
+  index: number
+): HiringFormField | null {
+  const parsed = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+
+  if (!parsed) {
+    return null;
+  }
+
+  const label = asNonEmptyString(parsed.label);
+
+  if (!label) {
+    return null;
+  }
+
+  const normalizedLabel = label.toLowerCase();
+
+  if (
+    normalizedLabel.includes("full name") ||
+    normalizedLabel === "email" ||
+    normalizedLabel.includes("email address") ||
+    normalizedLabel.includes("resume") ||
+    normalizedLabel.includes("cv upload")
+  ) {
+    return null;
+  }
+
+  const type = normalizeGeneratedFieldType(parsed.type);
+  const systemKey = normalizeGeneratedSystemKey(parsed.systemKey);
+
+  return {
+    id: asNonEmptyString(parsed.id) || `generated-field-${index + 1}`,
+    label,
+    placeholder: asNonEmptyString(parsed.placeholder) || "",
+    helper: asNonEmptyString(parsed.helper) || "",
+    required: parsed.required !== false,
+    type,
+    options: isGeneratedChoiceFieldType(type)
+      ? normalizeGeneratedFieldOptions(parsed.options)
+      : [],
+    ...(systemKey ? { systemKey } : {}),
+  } satisfies HiringFormField;
+}
+
+function normalizeGeneratedFieldType(value: unknown): HiringFormFieldType {
+  const normalized = String(value || "").trim();
+  const allowed: HiringFormFieldType[] = [
+    "short_text",
+    "long_text",
+    "email",
+    "phone",
+    "url",
+    "number",
+    "date",
+    "multiple_choice",
+    "checkboxes",
+    "dropdown",
+  ];
+
+  return allowed.includes(normalized as HiringFormFieldType)
+    ? (normalized as HiringFormFieldType)
+    : "short_text";
+}
+
+function normalizeGeneratedSystemKey(value: unknown): HiringFormField["systemKey"] | undefined {
+  const normalized = String(value || "").trim();
+  const allowed: Array<HiringFormField["systemKey"]> = [
+    "phone",
+    "location",
+    "linkedIn",
+    "portfolio",
+    "yearsExperience",
+    "noticePeriod",
+    "salaryExpectation",
+    "coverNote",
+  ];
+
+  return allowed.includes(normalized as HiringFormField["systemKey"])
+    ? (normalized as HiringFormField["systemKey"])
+    : undefined;
+}
+
+function normalizeGeneratedFieldOptions(value: unknown) {
+  const options = Array.isArray(value) ? value : [];
+  const normalized = options
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 8);
+
+  return normalized.length >= 2 ? normalized : ["Option 1", "Option 2"];
+}
+
+function normalizeGeneratedStringList(value: unknown, fallback: string[]) {
+  const options = Array.isArray(value) ? value : [];
+  const normalized = uniqueStringList(
+    options
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean)
+      .slice(0, 8)
+  );
+
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function buildLocalFormIntro(
+  roleTitle: string,
+  location: string,
+  prompt?: string
+) {
+  const roleLine = location
+    ? `Apply for the ${roleTitle} role${location ? ` in a ${location} setup` : ""}.`
+    : `Apply for the ${roleTitle} role.`;
+  const extraLine = firstSentenceAsBullet(prompt);
+
+  return [roleLine, "Share your relevant experience, examples of your work, and practical availability details.", extraLine]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function buildLocalAnalysisGoal(roleTitle: string, roleSetup: RoleSetup) {
+  const mustHave = roleSetup.mustHaveSkills.slice(0, 4).join(", ");
+  const focus = roleSetup.interviewFocus.slice(0, 3).join(", ");
+  const sentences = [
+    `Screen applicants for ${roleTitle} using role match, clarity of evidence, and practical readiness.`,
+    mustHave ? `Prioritize evidence of ${mustHave}.` : "",
+    focus ? `Pay close attention to ${focus}.` : "",
+  ].filter(Boolean);
+
+  return sentences.join(" ");
+}
+
+function inferGeneratedFormKind({
+  title,
+  analysisGoal,
+  prompt,
+  roleSetup,
+}: {
+  title?: string;
+  analysisGoal?: string;
+  prompt?: string;
+  roleSetup: RoleSetup;
+}) {
+  const combined = [
+    title,
+    analysisGoal,
+    prompt,
+    roleSetup.title,
+    roleSetup.summary,
+    roleSetup.mustHaveSkills.join(" "),
+    roleSetup.niceToHaveSkills.join(" "),
+    roleSetup.interviewFocus.join(" "),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    /(engineer|developer|frontend|backend|full[- ]?stack|software|qa|devops|data|it support|technical|api|next\.?js|react|typescript)/.test(
+      combined
+    )
+  ) {
+    return "technical";
+  }
+
+  if (
+    /(customer|support|service|success|call center|relationship|sales|account manager|client)/.test(
+      combined
+    )
+  ) {
+    return "customer";
+  }
+
+  return "general";
+}
+
+function inferSeniorityFromText(...values: Array<string | undefined>) {
+  const combined = values.filter(Boolean).join(" ").toLowerCase();
+
+  if (/\b(senior|lead|principal|staff)\b/.test(combined)) {
+    return "Senior";
+  }
+
+  if (/\b(junior|entry|graduate|intern)\b/.test(combined)) {
+    return "Junior";
+  }
+
+  if (/\b(mid|intermediate)\b/.test(combined)) {
+    return "Mid-level";
+  }
+
+  return "";
+}
+
+function inferLocationFromText(...values: Array<string | undefined>) {
+  const combined = values.filter(Boolean).join(" ").toLowerCase();
+
+  if (/\bremote\b/.test(combined)) {
+    return "Remote";
+  }
+
+  if (/\bhybrid\b/.test(combined)) {
+    return "Hybrid";
+  }
+
+  if (/\bonsite\b/.test(combined) || /\bon-site\b/.test(combined)) {
+    return "Onsite";
+  }
+
+  return "";
+}
+
+function asNonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function isGeneratedChoiceFieldType(type: HiringFormFieldType) {
+  return type === "multiple_choice" || type === "checkboxes" || type === "dropdown";
+}
+
+function firstNonEmpty(...values: Array<string | undefined>) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function firstSentenceAsBullet(value: string | undefined) {
+  if (!value || !value.trim()) {
+    return "";
+  }
+
+  const normalized = value.replace(/\s+/g, " ").trim();
+  const [sentence] = normalized.split(/(?<=[.!?])\s+/);
+  return sentence?.trim() || normalized;
 }
 
 function parseLooseJson(raw: string) {

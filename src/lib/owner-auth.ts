@@ -178,10 +178,7 @@ function readOwnerSessionFromCookieValue(cookieValue: string | null) {
 }
 
 function getOwnerSessionSecret() {
-  const secret =
-    process.env.OWNER_SESSION_SECRET?.trim() ||
-    process.env.WORKSPACE_SESSION_SECRET?.trim() ||
-    "";
+  const secret = process.env.OWNER_SESSION_SECRET?.trim() || "";
 
   return secret || null;
 }

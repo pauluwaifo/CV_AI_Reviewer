@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import {
+  createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
+  isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
 import {
@@ -20,10 +22,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
+  }
+
+  if (!isWorkspaceAdminSession(session)) {
+    return createWorkspaceForbiddenResponse();
   }
 
   const members = await listWorkspaceMembers(session.workspaceId);
@@ -32,10 +38,14 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
+  }
+
+  if (!isWorkspaceAdminSession(session)) {
+    return createWorkspaceForbiddenResponse();
   }
 
   try {
@@ -104,10 +114,14 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
+  }
+
+  if (!isWorkspaceAdminSession(session)) {
+    return createWorkspaceForbiddenResponse();
   }
 
   try {

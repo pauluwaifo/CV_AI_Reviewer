@@ -17,7 +17,7 @@ export async function GET(
   { params }: { params: Promise<{ applicationId: string }> }
 ) {
   const { applicationId } = await params;
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();
@@ -45,7 +45,7 @@ export async function DELETE(
   { params }: { params: Promise<{ applicationId: string }> }
 ) {
   const { applicationId } = await params;
-  const session = requireWorkspaceApiSession(request);
+  const session = await requireWorkspaceApiSession(request);
 
   if (!session) {
     return createWorkspaceUnauthorizedResponse();

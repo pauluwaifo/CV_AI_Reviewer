@@ -15,16 +15,19 @@ import type {
   HiringFormListItem,
   HiringFormQuestion,
   HiringFormRecord,
+  HiringFormScreeningPolicy,
   HiringFunnelStoreData,
   PublicHiringForm,
   StoredResumeFile,
   WorkspacePublicSnapshot,
 } from "@/types/hiring-funnel";
+import { normalizeHiringFormScreeningPolicy } from "@/lib/hiring-screening-policy";
 import {
   DEFAULT_WORKSPACE_SETTINGS,
   getWorkspacePublicSnapshot,
   sanitizeWorkspaceId,
 } from "@/lib/workspace-settings";
+import { getLocalWorkspaceAccessRecord } from "@/lib/local-workspace-access-store";
 import { getLocalWorkspaceSettings } from "@/lib/local-workspace-settings-store";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -91,9 +94,14 @@ export async function getLocalPublicHiringForm(
     return null;
   }
 
-  const workspace = getWorkspacePublicSnapshot(
-    await getLocalWorkspaceSettings(form.workspaceId)
-  );
+  const [settings, accessRecord] = await Promise.all([
+    getLocalWorkspaceSettings(form.workspaceId),
+    getLocalWorkspaceAccessRecord(form.workspaceId),
+  ]);
+  const workspace = {
+    ...getWorkspacePublicSnapshot(settings),
+    contactEmail: accessRecord?.contactEmail ?? "",
+  };
 
   return {
     id: form.id,
@@ -124,6 +132,7 @@ export async function createLocalHiringForm({
   intro,
   analysisGoal,
   roleSetup,
+  screeningPolicy,
   customQuestions,
   formFields,
   expiresAt,
@@ -136,6 +145,7 @@ export async function createLocalHiringForm({
   intro: string;
   analysisGoal: string;
   roleSetup: RoleSetup;
+  screeningPolicy: HiringFormScreeningPolicy;
   customQuestions: HiringFormQuestion[];
   formFields: HiringFormField[];
   expiresAt: string | null;
@@ -151,6 +161,7 @@ export async function createLocalHiringForm({
     intro,
     analysisGoal,
     roleSetup,
+    screeningPolicy: normalizeHiringFormScreeningPolicy(screeningPolicy),
     customQuestions,
     formFields: normalizeFormFields(formFields, customQuestions),
     createdAt: new Date().toISOString(),
@@ -173,9 +184,11 @@ export async function updateLocalHiringForm({
   intro,
   analysisGoal,
   roleSetup,
+  screeningPolicy,
   customQuestions,
   formFields,
   expiresAt,
+  jdAttachment,
   published,
 }: {
   formId: string;
@@ -185,9 +198,11 @@ export async function updateLocalHiringForm({
   intro: string;
   analysisGoal: string;
   roleSetup: RoleSetup;
+  screeningPolicy: HiringFormScreeningPolicy;
   customQuestions: HiringFormQuestion[];
   formFields: HiringFormField[];
   expiresAt: string | null;
+  jdAttachment: HiringFormJdAttachment | null;
   published?: boolean;
 }) {
   const store = await readStore();
@@ -208,9 +223,11 @@ export async function updateLocalHiringForm({
     intro,
     analysisGoal,
     roleSetup,
+    screeningPolicy: normalizeHiringFormScreeningPolicy(screeningPolicy),
     customQuestions,
     formFields: normalizeFormFields(formFields, customQuestions),
     expiresAt,
+    jdAttachment,
     published: published ?? current.published,
   };
 
@@ -518,6 +535,7 @@ function normalizeFormRecord(value: unknown): HiringFormRecord | null {
     intro: typeof parsed.intro === "string" ? parsed.intro : "",
     analysisGoal: typeof parsed.analysisGoal === "string" ? parsed.analysisGoal : "",
     roleSetup: normalizeRoleSetup(parsed.roleSetup),
+    screeningPolicy: normalizeHiringFormScreeningPolicy(parsed.screeningPolicy),
     customQuestions: normalizeCustomQuestions(parsed.customQuestions),
     formFields: normalizeFormFields(
       parsed.formFields,

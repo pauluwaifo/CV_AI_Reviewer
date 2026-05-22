@@ -156,8 +156,9 @@ export default function SignInForm({
                   Sign in to your hiring workspace
                 </h1>
                 <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
-                  Use the workspace ID and access key provisioned for your company. Admin tools and
-                  candidate records stay locked to that workspace session.
+                  Use the workspace ID and either the shared admin key for your company or the
+                  member invite key issued to you. Candidate records stay locked to that workspace
+                  session.
                 </p>
               </div>
             </div>
@@ -187,7 +188,7 @@ export default function SignInForm({
                     onChange={(event) => setAccessKey(event.target.value)}
                     type={showAccessKey ? "text" : "password"}
                     className={`${inputClassName} pr-12`}
-                    placeholder="Enter your workspace access key"
+                    placeholder="Enter your shared or member access key"
                     autoComplete="current-password"
                   />
                   <button

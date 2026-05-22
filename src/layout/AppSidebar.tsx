@@ -7,30 +7,13 @@ import { useWorkspace } from "@/context/WorkspaceContext";
 import { useSidebar } from "../context/SidebarContext";
 import { BoltIcon, DocsIcon, HorizontaLDots, TaskIcon } from "../icons";
 
-const navItems = [
-  {
-    name: "Screen CV",
-    path: "/upload",
-    icon: <DocsIcon />,
-  },
-  {
-    name: "Results",
-    path: "/results",
-    icon: <TaskIcon />,
-  },
-  {
-    name: "Hiring Pipeline",
-    path: "/pipeline",
-    icon: <BoltIcon />,
-  },
-  {
-    name: "Workspace Settings",
-    path: "/workspace",
-    icon: <TaskIcon />,
-  },
-];
-
-export default function AppSidebar() {
+export default function AppSidebar({
+  session,
+}: {
+  session: {
+    role: "admin" | "member";
+  } | null;
+}) {
   const { settings } = useWorkspace();
   const pathname = usePathname();
   const {
@@ -39,6 +22,32 @@ export default function AppSidebar() {
     toggleMobileSidebar,
   } = useSidebar();
 
+  const navItems = [
+    {
+      name: "Screen CV",
+      path: "/upload",
+      icon: <DocsIcon />,
+    },
+    {
+      name: "Results",
+      path: "/results",
+      icon: <TaskIcon />,
+    },
+    {
+      name: "Hiring Pipeline",
+      path: "/pipeline",
+      icon: <BoltIcon />,
+    },
+    ...(session?.role === "admin"
+      ? [
+          {
+            name: "Workspace Settings",
+            path: "/workspace",
+            icon: <TaskIcon />,
+          },
+        ]
+      : []),
+  ];
   const showFull = isExpanded || isMobileOpen;
 
   return (
@@ -139,8 +148,9 @@ export default function AppSidebar() {
               Workspace dashboard
             </p>
             <p className="mt-2 text-xs leading-5 text-brand-700 dark:text-brand-200">
-              Screen candidates, manage forms, review results, and control workspace access from
-              one admin area.
+              {session?.role === "admin"
+                ? "Screen candidates, manage forms, review results, and control workspace access from one admin area."
+                : "Screen candidates, manage forms, and review results from one secure workspace area."}
             </p>
           </div>
         ) : null}

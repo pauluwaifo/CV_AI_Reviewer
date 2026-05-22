@@ -20,7 +20,7 @@ export default async function SignUpPage({
   const nextPath = normalizeNextPath(Array.isArray(next) ? next[0] : next);
 
   if (session) {
-    redirect(nextPath === "/" ? "/workspace" : nextPath);
+    redirect(nextPath === "/" ? (session.role === "admin" ? "/workspace" : "/pipeline") : nextPath);
   }
 
   return <SignUpForm nextPath={nextPath === "/" ? "/workspace" : nextPath} />;
