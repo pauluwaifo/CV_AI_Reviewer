@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { buildPublicFormTheme } from "@/lib/workspace-settings";
@@ -74,6 +75,7 @@ export default function AnalyzerHomePage({
   isAuthenticated?: boolean;
   canManageWorkspace?: boolean;
 }) {
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { settings } = useWorkspace();
   const theme = buildPublicFormTheme(settings.dashboardAccent);
   const accentRgb = toRgb(settings.dashboardAccent);
@@ -89,10 +91,17 @@ export default function AnalyzerHomePage({
       ? "Workspace Settings"
       : "Open Pipeline"
     : "Sign In";
+  const navItems = [
+    { label: "About Us", href: "#about" },
+    { label: "Our Vision", href: "#vision" },
+    { label: "Platform", href: "#platform" },
+    { label: "Workflow", href: "#workflow" },
+    { label: "Contacts", href: "#contact" },
+  ];
 
   return (
     <div
-      className="-mx-4 -mt-4 min-h-screen overflow-x-clip bg-[#050b1d] text-white sm:-mx-6"
+      className="min-h-screen overflow-x-clip bg-[#050b1d] text-white"
       style={{
         backgroundImage: [
           `radial-gradient(circle at top, rgba(${accentRgb}, 0.24), transparent 30%)`,
@@ -117,16 +126,16 @@ export default function AnalyzerHomePage({
       {sparkles.map((sparkle, index) => (
         <span
           key={`${sparkle.top}-${sparkle.left ?? sparkle.right}-${index}`}
-          className="pointer-events-none absolute h-1 w-1 rounded-full bg-white shadow-[0_0_16px_rgba(255,255,255,0.7)]"
+          className="pointer-events-none absolute hidden h-1 w-1 rounded-full bg-white shadow-[0_0_16px_rgba(255,255,255,0.7)] sm:block"
           style={sparkle}
         />
       ))}
 
       <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-[#07112e]/68 backdrop-blur-2xl supports-[backdrop-filter]:bg-[#07112e]/48">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-5 px-4 py-4 sm:px-6">
-          <Link href="/" className="flex min-w-0 items-center gap-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-5 py-3.5 sm:gap-5 sm:px-6 sm:py-4">
+          <Link href="/" className="flex min-w-0 items-center gap-3 sm:gap-4">
             <span
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border text-sm font-semibold text-white"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-semibold text-white sm:h-11 sm:w-11"
               style={{
                 borderColor: `rgba(${accentRgb}, 0.34)`,
                 background: `linear-gradient(135deg, rgba(${accentRgb}, 0.42), rgba(${accentDeepRgb}, 0.18))`,
@@ -135,32 +144,24 @@ export default function AnalyzerHomePage({
               {settings.appName.charAt(0)}
             </span>
             <div className="min-w-0">
-              <p className="truncate text-lg font-semibold text-white">{settings.appName}</p>
-              <p className="truncate text-sm text-white/58">
+              <p className="truncate text-base font-semibold text-white sm:text-lg">
+                {settings.appName}
+              </p>
+              <p className="truncate text-xs text-white/58 sm:text-sm">
                 {settings.organizationName} workspace
               </p>
             </div>
           </Link>
 
           <nav className="hidden items-center gap-8 text-sm text-white/72 lg:flex">
-            <a href="#about" className="transition hover:text-white">
-              About Us
-            </a>
-            <a href="#vision" className="transition hover:text-white">
-              Our Vision
-            </a>
-            <a href="#platform" className="transition hover:text-white">
-              Platform
-            </a>
-            <a href="#workflow" className="transition hover:text-white">
-              Workflow
-            </a>
-            <a href="#contact" className="transition hover:text-white">
-              Contacts
-            </a>
+            {navItems.map((item) => (
+              <a key={item.href} href={item.href} className="transition hover:text-white">
+                {item.label}
+              </a>
+            ))}
           </nav>
 
-          <div className="flex items-center gap-3">
+          <div className="hidden items-center gap-3 sm:flex">
             <Link
               href={isAuthenticated ? "/upload" : "/signup?next=%2Fworkspace"}
               className="hidden text-sm text-white/72 transition hover:text-white sm:inline-flex"
@@ -178,21 +179,111 @@ export default function AnalyzerHomePage({
               {isAuthenticated ? "Open Workspace" : "Workspace Sign In"}
             </Link>
           </div>
+
+          <button
+            type="button"
+            aria-label={isMobileMenuOpen ? "Close navigation" : "Open navigation"}
+            aria-expanded={isMobileMenuOpen}
+            onClick={() => setIsMobileMenuOpen((current) => !current)}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[0.03] text-white transition hover:bg-white/8 lg:hidden"
+          >
+            <span className="flex flex-col gap-1.5">
+              <span
+                className={`block h-0.5 w-5 rounded-full bg-current transition ${
+                  isMobileMenuOpen ? "translate-y-2 rotate-45" : ""
+                }`}
+              />
+              <span
+                className={`block h-0.5 w-5 rounded-full bg-current transition ${
+                  isMobileMenuOpen ? "opacity-0" : ""
+                }`}
+              />
+              <span
+                className={`block h-0.5 w-5 rounded-full bg-current transition ${
+                  isMobileMenuOpen ? "-translate-y-2 -rotate-45" : ""
+                }`}
+              />
+            </span>
+          </button>
         </div>
       </header>
 
+      <div
+        className={`fixed inset-0 z-40 bg-[#040918]/72 backdrop-blur-sm transition lg:hidden ${
+          isMobileMenuOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        }`}
+        onClick={() => setIsMobileMenuOpen(false)}
+      />
+
+      <aside
+        className={`fixed inset-y-0 right-0 z-50 flex w-[min(88vw,360px)] flex-col border-l border-white/10 bg-[#08122d] px-5 py-6 shadow-[0_24px_80px_rgba(0,0,0,0.45)] transition duration-300 ease-out lg:hidden ${
+          isMobileMenuOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold uppercase tracking-[0.2em] text-white/48">
+              Navigation
+            </p>
+            <p className="mt-1 truncate text-lg font-semibold text-white">{settings.appName}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/12 bg-white/[0.03] text-xl text-white/76 transition hover:bg-white/8 hover:text-white"
+            aria-label="Close navigation"
+          >
+            ×
+          </button>
+        </div>
+
+        <nav className="mt-8 space-y-2">
+          {navItems.map((item) => (
+            <a
+              key={item.href}
+              href={item.href}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-white/[0.06] hover:text-white"
+            >
+              {item.label}
+              <span className="text-white/36">/</span>
+            </a>
+          ))}
+        </nav>
+
+        <div className="mt-auto space-y-3 border-t border-white/8 pt-6">
+          <Link
+            href={primaryHref}
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="inline-flex w-full items-center justify-center rounded-2xl px-5 py-3.5 text-sm font-medium text-white"
+            style={{
+              background: `linear-gradient(135deg, ${settings.dashboardAccent}, ${theme.accentHover})`,
+            }}
+          >
+            {isAuthenticated ? "Open Secure Workspace" : "Create Workspace"}
+          </Link>
+          <Link
+            href={secondaryHref}
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="inline-flex w-full items-center justify-center rounded-2xl border border-white/12 px-5 py-3.5 text-sm font-medium text-white/84 transition hover:bg-white/6 hover:text-white"
+          >
+            {secondaryLabel}
+          </Link>
+        </div>
+      </aside>
+
       <main className="relative">
-        <section className="relative min-h-screen px-4 pb-24 pt-32 sm:px-6 sm:pb-28 sm:pt-36 lg:pt-40">
-          <div className="mx-auto flex min-h-[calc(100vh-8rem)] max-w-7xl flex-col justify-center">
+        <section className="relative px-5 pb-10 pt-24 sm:px-6 sm:pb-28 sm:pt-36 lg:pt-40">
+          <div className="mx-auto flex min-h-0 max-w-7xl flex-col justify-start sm:min-h-[calc(100vh-8rem)] sm:justify-center">
             <div className="mx-auto max-w-4xl text-center">
-              <div className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/74">
+              <div className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/74 sm:px-5 sm:text-[11px] sm:tracking-[0.24em]">
                 Multi-workspace hiring operating system
               </div>
 
-              <h1 className="mt-8 text-5xl font-semibold tracking-tight text-white sm:text-6xl lg:text-8xl">
+              <h1 className="mt-7 text-[2.9rem] font-semibold leading-[0.95] tracking-tight text-white sm:mt-8 sm:text-6xl sm:leading-none lg:text-8xl">
                 Simplify the Hiring Journey.
                 <span
-                  className="mt-2 block"
+                  className="mt-3 block sm:mt-2"
                   style={{
                     color: theme.accentSoft,
                     textShadow: `0 0 44px rgba(${accentRgb}, 0.18)`,
@@ -202,15 +293,15 @@ export default function AnalyzerHomePage({
                 </span>
               </h1>
 
-              <p className="mx-auto mt-8 max-w-3xl text-lg leading-9 text-white/72 sm:text-xl">
+              <p className="mx-auto mt-6 max-w-3xl text-base leading-7 text-white/72 sm:mt-8 sm:text-xl sm:leading-9">
                 {settings.appName} transforms recruiting complexity into a secure, branded,
                 evidence-led workflow for screening, public applications, and shortlist decisions.
               </p>
 
-              <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+              <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:mt-10 sm:flex-row sm:items-center sm:gap-4">
                 <Link
                   href={primaryHref}
-                  className="inline-flex min-w-[220px] items-center justify-center rounded-full px-7 py-4 text-base font-medium text-white shadow-[0_25px_70px_rgba(0,0,0,0.28)] transition hover:translate-y-[-1px]"
+                  className="inline-flex min-w-[220px] items-center justify-center rounded-full px-6 py-4 text-base font-medium text-white shadow-[0_25px_70px_rgba(0,0,0,0.28)] transition hover:translate-y-[-1px] sm:px-7"
                   style={{
                     background: `linear-gradient(135deg, ${settings.dashboardAccent}, ${theme.accentHover})`,
                   }}
@@ -219,16 +310,16 @@ export default function AnalyzerHomePage({
                 </Link>
                 <Link
                   href={secondaryHref}
-                  className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-white/12 px-7 py-4 text-base font-medium text-white/84 transition hover:bg-white/6 hover:text-white"
+                  className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-white/12 px-6 py-4 text-base font-medium text-white/84 transition hover:bg-white/6 hover:text-white sm:px-7"
                 >
                   {secondaryLabel}
                 </Link>
               </div>
             </div>
 
-            <div className="relative mt-20 h-64 sm:mt-24 sm:h-72 lg:h-80">
+            <div className="relative mt-8 h-16 overflow-hidden sm:mt-24 sm:h-72 lg:h-80">
               <div
-                className="absolute inset-x-[-18%] bottom-[-72%] h-[155%] rounded-[50%] border"
+                className="absolute inset-x-[-30%] bottom-[-20%] h-[95%] rounded-[50%] border sm:inset-x-[-18%] sm:bottom-[-72%] sm:h-[155%]"
                 style={{
                   borderColor: `rgba(${accentRgb}, 0.18)`,
                   background: `radial-gradient(circle at 50% 0%, rgba(${accentRgb}, 0.34), rgba(10,18,44,0.18) 45%, transparent 76%)`,
@@ -236,7 +327,7 @@ export default function AnalyzerHomePage({
                 }}
               />
               <div
-                className="absolute inset-x-[-5%] bottom-[-32%] h-[90%] rounded-[50%] border border-white/6"
+                className="absolute inset-x-[-14%] bottom-[-10%] h-[48%] rounded-[50%] border border-white/6 sm:inset-x-[-5%] sm:bottom-[-32%] sm:h-[90%]"
                 style={{
                   background: "linear-gradient(180deg, rgba(255,255,255,0.03), transparent)",
                 }}
@@ -247,7 +338,7 @@ export default function AnalyzerHomePage({
 
         <section
           id="about"
-          className="scroll-mt-24 border-t border-white/6 px-4 py-20 sm:px-6 sm:py-24"
+          className="scroll-mt-24 border-t border-white/6 px-5 py-14 sm:px-6 sm:py-24"
         >
           <div className="mx-auto max-w-7xl space-y-10">
             <div className="mx-auto max-w-3xl space-y-4 text-center">
@@ -285,11 +376,11 @@ export default function AnalyzerHomePage({
 
         <section
           id="vision"
-          className="scroll-mt-24 relative overflow-hidden border-t border-white/6 px-4 py-24 sm:px-6 sm:py-28"
+          className="scroll-mt-24 relative overflow-hidden border-t border-white/6 px-5 py-24 sm:px-6 sm:py-28"
         >
-          <WaveLine className="-top-4 left-1/2 w-[150%] -translate-x-1/2" />
-          <WaveLine className="top-16 left-1/2 w-[140%] -translate-x-1/2" />
-          <WaveLine className="top-36 left-1/2 w-[130%] -translate-x-1/2" />
+          <WaveLine className="-top-4 left-1/2 hidden w-[150%] -translate-x-1/2 sm:block" />
+          <WaveLine className="top-16 left-1/2 hidden w-[140%] -translate-x-1/2 sm:block" />
+          <WaveLine className="top-36 left-1/2 hidden w-[130%] -translate-x-1/2 sm:block" />
 
           <div className="relative mx-auto max-w-5xl text-center">
             <SectionPill label="Our Vision" />
@@ -314,7 +405,7 @@ export default function AnalyzerHomePage({
 
         <section
           id="platform"
-          className="scroll-mt-24 border-t border-white/6 px-4 py-20 sm:px-6 sm:py-24"
+          className="scroll-mt-24 border-t border-white/6 px-5 py-20 sm:px-6 sm:py-24"
         >
           <div className="mx-auto max-w-7xl space-y-8">
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-end">
@@ -375,7 +466,7 @@ export default function AnalyzerHomePage({
 
         <section
           id="workflow"
-          className="scroll-mt-24 border-t border-white/6 px-4 py-20 sm:px-6 sm:py-24"
+          className="scroll-mt-24 border-t border-white/6 px-5 py-20 sm:px-6 sm:py-24"
         >
           <div className="mx-auto max-w-7xl">
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -429,10 +520,10 @@ export default function AnalyzerHomePage({
 
         <section
           id="contact"
-          className="scroll-mt-24 border-t border-white/6 px-4 py-20 sm:px-6 sm:py-24"
+          className="scroll-mt-24 border-t border-white/6 px-5 py-20 sm:px-6 sm:py-24"
         >
           <div
-            className="mx-auto max-w-7xl rounded-[32px] border px-6 py-8 sm:px-8 sm:py-10"
+            className="mx-auto max-w-7xl rounded-[28px] border px-5 py-7 sm:rounded-[32px] sm:px-8 sm:py-10"
             style={{
               borderColor: `rgba(${accentRgb}, 0.12)`,
               background:
@@ -444,7 +535,7 @@ export default function AnalyzerHomePage({
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/48">
                   Ready to launch
                 </p>
-                <h2 className="max-w-3xl text-3xl font-medium leading-tight text-white sm:text-5xl">
+                <h2 className="max-w-3xl text-[2rem] font-medium leading-[1.12] text-white sm:text-5xl sm:leading-tight">
                   Make this your company&apos;s recruiting front door with your own name, colors,
                   public forms, and secure hiring workflow.
                 </h2>
@@ -453,7 +544,7 @@ export default function AnalyzerHomePage({
               <div className="flex flex-col gap-3 sm:flex-row">
                 <Link
                   href={secondaryHref}
-                  className="inline-flex items-center justify-center rounded-full border border-white/12 px-5 py-3 text-sm font-medium text-white/84 transition hover:bg-white/6 hover:text-white"
+                  className="inline-flex w-full items-center justify-center rounded-full border border-white/12 px-5 py-3 text-sm font-medium text-white/84 transition hover:bg-white/6 hover:text-white sm:w-auto"
                 >
                   {isAuthenticated
                     ? canManageWorkspace
@@ -463,7 +554,7 @@ export default function AnalyzerHomePage({
                 </Link>
                 <Link
                   href={primaryHref}
-                  className="inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-medium text-white transition hover:translate-y-[-1px]"
+                  className="inline-flex w-full items-center justify-center rounded-full px-5 py-3 text-sm font-medium text-white transition hover:translate-y-[-1px] sm:w-auto"
                   style={{
                     background: `linear-gradient(135deg, ${settings.dashboardAccent}, ${theme.accentHover})`,
                   }}
@@ -475,7 +566,7 @@ export default function AnalyzerHomePage({
           </div>
         </section>
 
-        <footer className="border-t border-white/6 px-4 py-10 sm:px-6 sm:py-12">
+        <footer className="border-t border-white/6 px-5 py-10 sm:px-6 sm:py-12">
           <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,0.6fr))]">
             <div className="space-y-4">
               <div className="flex items-center gap-3">

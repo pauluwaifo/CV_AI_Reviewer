@@ -6,6 +6,12 @@ import { pathToFileURL } from "node:url";
 import { PDFParse } from "pdf-parse";
 
 import { buildLocalAnalysis } from "@/lib/local-document-analysis";
+import {
+  buildLocalWorkspaceAssistantReply,
+  buildWorkspaceAssistantSystemPrompt,
+  type WorkspaceAssistantContext,
+  type WorkspaceAssistantMessage,
+} from "@/lib/workspace-assistant";
 import type {
   HiringFormField,
   HiringFormFieldType,
@@ -27,6 +33,7 @@ import type {
   ScoreBreakdownItem,
   SkillAssessment,
   UploadSourceKind,
+  ProviderFallbackMode,
 } from "@/types/document-intelligence";
 import { maxUploadSizeBytes } from "@/types/document-intelligence";
 
@@ -42,7 +49,7 @@ const HUGGING_FACE_TIMEOUT_MS = parsePositiveInteger(
 const HUGGING_FACE_DIRECT_PROMPT_CHAR_LIMIT = 5_800;
 const HUGGING_FACE_CHUNK_SIZE = 3_800;
 const HUGGING_FACE_MAX_CHUNKS = 2;
-const HUGGING_FACE_MAX_TOKENS = 1_100;
+const HUGGING_FACE_MAX_TOKENS = 1_800;
 const HUGGING_FACE_SIGNAL_LINE_LIMIT = 18;
 const HUGGING_FACE_SOURCE_CHAR_LIMIT = 7_200;
 const DEFAULT_PROVIDER_COOLDOWN_MS = parsePositiveInteger(
@@ -110,7 +117,9 @@ const DEFAULT_GEMINI_FALLBACK_MODELS = [
   "gemini-2.0-flash-001",
 ] as const;
 const DEFAULT_HUGGING_FACE_MODELS = [
-  "katanemo/Arch-Router-1.5B:hf-inference",
+  "Qwen/Qwen2.5-72B-Instruct",
+  "Qwen/Qwen2.5-32B-Instruct",
+  "meta-llama/Llama-3.3-70B-Instruct",
 ] as const;
 let pdfWorkerConfigured = false;
 const providerCooldownState: Record<
@@ -167,12 +176,14 @@ export async function analyzeUpload({
   file,
   documentType,
   provider,
+  providerFallbackMode = "cross-provider",
   analysisGoal,
   roleSetup,
 }: {
   file: File;
   documentType: DocumentType;
   provider: AnalysisProvider;
+  providerFallbackMode?: ProviderFallbackMode;
   analysisGoal?: string;
   roleSetup?: RoleSetup;
 }): Promise<AnalysisResponse> {
@@ -289,7 +300,8 @@ export async function analyzeUpload({
             localResult
           ),
         };
-      }
+      },
+      providerFallbackMode
     );
 
     resolvedProvider = providerResult.provider;
@@ -298,6 +310,13 @@ export async function analyzeUpload({
     providerWarnings = providerResult.warnings;
   } catch (error) {
     providerWarnings = extractProviderWarnings(error);
+    console.warn("[AI provider] Falling back to local analysis.", {
+      providerPreference: provider,
+      providerFallbackMode,
+      fileName: file.name,
+      warnings: providerWarnings,
+      detail: formatProviderFailure(error),
+    });
 
     if (
       process.env.NODE_ENV !== "production" &&
@@ -475,6 +494,63 @@ export async function generateHiringFormDraft({
   } catch (error) {
     return {
       draft: localDraft,
+      provider: "local",
+      providerWarnings: extractProviderWarnings(error),
+    };
+  }
+}
+
+export async function generateWorkspaceAssistantReply({
+  context,
+  messages,
+  provider = "auto",
+}: {
+  context: WorkspaceAssistantContext;
+  messages: WorkspaceAssistantMessage[];
+  provider?: AnalysisProvider;
+}): Promise<{
+  reply: string;
+  provider: ResolvedProvider;
+  providerDetail?: string;
+  providerWarnings: string[];
+}> {
+  const localReply = buildLocalWorkspaceAssistantReply({
+    context,
+    messages,
+  });
+
+  try {
+    const providerResult = await withProviderFallback(
+      provider,
+      async (activeProvider) => {
+        const state: ProviderRunState = {};
+        const raw = await generateWithProvider(
+          activeProvider,
+          state,
+          buildWorkspaceAssistantSystemPrompt({
+            context,
+            messages,
+            provider,
+          })
+        );
+        const parsed = parseLooseJson(raw) as { reply?: unknown };
+
+        return {
+          detail: state.detail,
+          value: normalizeWorkspaceAssistantReply(parsed.reply, localReply),
+        };
+      }
+    );
+
+    return {
+      reply: providerResult.value,
+      provider: providerResult.provider,
+      providerDetail: providerResult.detail || undefined,
+      providerWarnings: providerResult.warnings,
+    };
+  } catch (error) {
+    return {
+      reply: localReply,
       provider: "local",
       providerWarnings: extractProviderWarnings(error),
     };
@@ -948,13 +1024,15 @@ function buildTextChunks(text: string, options: ChunkOptions = {}) {
 
 async function withProviderFallback<T>(
   preferredProvider: AnalysisProvider,
-  task: (provider: RemoteProvider) => Promise<{ value: T; detail?: string }>
+  task: (provider: RemoteProvider) => Promise<{ value: T; detail?: string }>,
+  fallbackMode: ProviderFallbackMode = "cross-provider"
 ): Promise<ProviderAttemptResult<T>> {
-  const providers = resolveProviderCandidates(preferredProvider);
+  const providers = resolveProviderCandidates(preferredProvider, fallbackMode);
   const errors: string[] = [];
 
   for (const provider of providers) {
     if (!isProviderConfigured(provider)) {
+      console.warn(`[AI provider] Skipping ${provider}: not configured.`);
       errors.push(`${provider} is not configured.`);
       continue;
     }
@@ -962,6 +1040,7 @@ async function withProviderFallback<T>(
     const cooldownMessage = getProviderCooldownMessage(provider);
 
     if (cooldownMessage) {
+      console.warn(`[AI provider] Skipping ${provider}: ${cooldownMessage}`);
       errors.push(`${provider}: ${cooldownMessage}`);
       continue;
     }
@@ -978,6 +1057,7 @@ async function withProviderFallback<T>(
     } catch (error) {
       const message = formatProviderFailure(error);
       recordProviderFailure(provider, message);
+      console.warn(`[AI provider] ${provider} failed: ${message}`);
       errors.push(`${provider}: ${message}`);
     }
   }
@@ -990,16 +1070,27 @@ async function withProviderFallback<T>(
   );
 }
 
-function resolveProviderCandidates(preferredProvider: AnalysisProvider) {
+function resolveProviderCandidates(
+  preferredProvider: AnalysisProvider,
+  fallbackMode: ProviderFallbackMode
+): RemoteProvider[] {
+  if (fallbackMode === "local-only") {
+    if (preferredProvider === "auto") {
+      return ["gemini"];
+    }
+
+    return [preferredProvider];
+  }
+
   if (preferredProvider === "gemini") {
-    return ["gemini", "huggingface"] as const;
+    return ["gemini", "huggingface"];
   }
 
   if (preferredProvider === "huggingface") {
-    return ["huggingface", "gemini"] as const;
+    return ["huggingface", "gemini"];
   }
 
-  return ["gemini", "huggingface"] as const;
+  return ["gemini", "huggingface"];
 }
 
 function isProviderConfigured(provider: RemoteProvider) {
@@ -1267,7 +1358,7 @@ async function generateWithHuggingFace(prompt: string, state: ProviderRunState) 
         token,
         model,
         prompt,
-        useJsonMode: true,
+        responseStyle: "json",
       });
 
       if (containsParseableJson(text)) {
@@ -1286,7 +1377,7 @@ async function generateWithHuggingFace(prompt: string, state: ProviderRunState) 
         token,
         model,
         prompt,
-        useJsonMode: false,
+        responseStyle: "plain",
       });
 
       if (containsParseableJson(fallbackText)) {
@@ -1301,6 +1392,11 @@ async function generateWithHuggingFace(prompt: string, state: ProviderRunState) 
         return recoveredFallbackText;
       }
 
+      console.warn(
+        `[AI provider] Hugging Face returned non-JSON text for ${model} in both modes. Structured preview: ${formatProviderTextPreview(
+          text
+        )}. Fallback preview: ${formatProviderTextPreview(fallbackText)}.`
+      );
       errors.push(`${model}: returned incomplete plain text in both structured and fallback modes.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Hugging Face error";
@@ -1315,7 +1411,7 @@ async function generateWithHuggingFace(prompt: string, state: ProviderRunState) 
           token,
           model,
           prompt,
-          useJsonMode: false,
+          responseStyle: "plain",
         });
 
         if (containsParseableJson(fallbackText)) {
@@ -1330,6 +1426,11 @@ async function generateWithHuggingFace(prompt: string, state: ProviderRunState) 
           return recoveredFallbackText;
         }
 
+        console.warn(
+          `[AI provider] Hugging Face returned incomplete fallback text for ${model}. Preview: ${formatProviderTextPreview(
+            fallbackText
+          )}.`
+        );
         errors.push(`${model}: fallback response was still incomplete.`);
       } catch (fallbackError) {
         const fallbackMessage =
@@ -1353,12 +1454,12 @@ async function requestHuggingFaceChatCompletion({
   token,
   model,
   prompt,
-  useJsonMode,
+  responseStyle,
 }: {
   token: string;
   model: string;
   prompt: string;
-  useJsonMode: boolean;
+  responseStyle: "json" | "plain";
 }) {
   let response: Response;
 
@@ -1373,16 +1474,24 @@ async function requestHuggingFaceChatCompletion({
         model,
         temperature: 0.2,
         max_tokens: HUGGING_FACE_MAX_TOKENS,
-        ...(useJsonMode ? { response_format: { type: "json_object" } } : {}),
+        top_p: 0.9,
+        ...(responseStyle === "json"
+          ? { response_format: { type: "json_object" } }
+          : {}),
         messages: [
           {
             role: "system",
             content:
-              "You are a precise HR screening and document analysis assistant. Reply with JSON only and do not use markdown fences.",
+              responseStyle === "json"
+                ? "You are a precise HR screening and document analysis assistant. Reply with JSON only and do not use markdown fences."
+                : "You are a precise HR screening and document analysis assistant. Reply in compact plain text only. Do not return JSON or markdown fences.",
           },
           {
             role: "user",
-            content: prompt,
+            content:
+              responseStyle === "json"
+                ? prompt
+                : buildHuggingFacePlainTextPrompt(prompt),
           },
         ],
       }),
@@ -1403,15 +1512,7 @@ async function requestHuggingFaceChatCompletion({
   }
 
   const content = payload?.choices?.[0]?.message?.content;
-  const text =
-    typeof content === "string"
-      ? content.trim()
-      : Array.isArray(content)
-        ? content
-            .map((item: { text?: string }) => item.text || "")
-            .join("")
-            .trim()
-        : "";
+  const text = extractHuggingFaceMessageText(content);
 
   if (!text) {
     throw new DocumentAnalysisError(
@@ -1421,6 +1522,60 @@ async function requestHuggingFaceChatCompletion({
   }
 
   return text;
+}
+
+function buildHuggingFacePlainTextPrompt(prompt: string) {
+  return `
+${prompt}
+
+Ignore any JSON-format instruction above if it conflicts with this fallback request.
+
+Reply in plain text with these exact section labels:
+Summary:
+Highlights:
+- bullet
+Concerns:
+- bullet
+Actions:
+- bullet
+Questions:
+- bullet
+Decision:
+Score:
+
+Keep every point grounded in the document text and keep it concise.
+`.trim();
+}
+
+function extractHuggingFaceMessageText(content: unknown) {
+  if (typeof content === "string") {
+    return stripReasoningBlocks(content).trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return stripReasoningBlocks(
+    content
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+
+        if (item && typeof item === "object") {
+          const record = item as Record<string, unknown>;
+          return typeof record.text === "string"
+            ? record.text
+            : typeof record.content === "string"
+              ? record.content
+              : "";
+        }
+
+        return "";
+      })
+      .join("")
+  ).trim();
 }
 
 function buildDirectAnalysisPrompt({
@@ -1680,11 +1835,7 @@ Return strict JSON with this top-level shape:
   "candidateProfile": {
     "name": "Candidate name or Unknown candidate",
     "headline": "Short headline",
-    "summary": "1 sentence profile",
-    "fields": [
-      { "label": "Experience", "value": "4+ years" },
-      { "label": "Location", "value": "City or region" }
-    ]
+    "summary": "1 sentence profile"
   },
   "roleMatch": {
     "summary": "Short role-fit view",
@@ -1699,22 +1850,11 @@ Return strict JSON with this top-level shape:
   "keyHighlights": ["short bullet"],
   "redFlags": ["short concern"],
   "recommendedActions": ["clear next step"],
-  "evidencePoints": [
-    {
-      "title": "short title",
-      "excerpt": "short exact snippet",
-      "rationale": "why it matters",
-      "tone": "strength | concern | neutral"
-    }
-  ],
   "interviewQuestions": ["specific follow-up question"],
   "score": {
     "value": 0,
     "label": "${scoreLabelOptions(documentType)}",
-    "rationale": "why this score fits",
-    "breakdown": [
-      ${buildBreakdownSchema(documentType)}
-    ]
+    "rationale": "why this score fits"
   },
   "extractedFacts": [
     { "label": "Field name", "value": "Value from the text" }
@@ -1726,12 +1866,11 @@ Rules:
 - Use only valid JSON with double quotes.
 - Do not include markdown fences or any prose outside the JSON.
 - Keep strings compact and concrete.
-- Keep keyHighlights to 3-5 items.
-- Keep redFlags to 0-4 items.
+- Keep keyHighlights to 3-4 items.
+- Keep redFlags to 0-3 items.
 - Keep recommendedActions to 2-3 items.
-- Keep evidencePoints to 3-4 items.
-- Keep interviewQuestions to 3-4 items.
-- Keep extractedFacts to 2-5 items.
+- Keep interviewQuestions to 2-4 items.
+- Keep extractedFacts to 2-4 items.
 - If you are unsure, omit weak details instead of inventing them.
 - If this is a CV, write for an HR or hiring-team audience deciding whether to move the candidate forward.
 `.trim();
@@ -1996,6 +2135,15 @@ function normalizeGeneratedJobDescription(value: unknown, fallback: string) {
 
   const normalized = value.replace(/\r/g, "").trim();
   return normalized.length >= 180 ? normalized : fallback;
+}
+
+function normalizeWorkspaceAssistantReply(value: unknown, fallback: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.replace(/\r/g, "").trim();
+  return normalized.length >= 24 ? normalized : fallback;
 }
 
 function normalizeGeneratedHiringFormDraft(
@@ -2596,7 +2744,7 @@ function firstSentenceAsBullet(value: string | undefined) {
 }
 
 function parseLooseJson(raw: string) {
-  const trimmed = raw.trim();
+  const trimmed = stripReasoningBlocks(raw).trim();
 
   for (const candidate of buildJsonCandidates(trimmed)) {
     const parsed = tryParseJson(candidate);
@@ -2606,6 +2754,9 @@ function parseLooseJson(raw: string) {
     }
   }
 
+  console.warn(
+    `[AI parser] Invalid JSON response preview: ${formatProviderTextPreview(trimmed)}`
+  );
   throw new DocumentAnalysisError(
     "The AI response was not valid JSON, so the analysis could not be completed.",
     502
@@ -2650,12 +2801,16 @@ function parsePositiveInteger(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function formatProviderTextPreview(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 220) || "(empty response)";
+}
+
 function containsParseableJson(value: string) {
   return buildJsonCandidates(value).some((candidate) => tryParseJson(candidate) !== undefined);
 }
 
 function recoverJsonFromPlainTextResponse(value: string) {
-  const normalized = value.replace(/\r/g, "").trim();
+  const normalized = stripReasoningBlocks(value).replace(/\r/g, "").trim();
 
   if (!normalized) {
     return null;
@@ -2933,12 +3088,16 @@ function tryParseJson(value: string) {
 }
 
 function sanitizeJsonCandidate(value: string) {
-  return value
+  return stripReasoningBlocks(value)
     .replace(/^\uFEFF/, "")
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
     .replace(/,\s*([}\]])/g, "$1")
     .trim();
+}
+
+function stripReasoningBlocks(value: string) {
+  return value.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 }
 
 function extractBalancedJsonBlocks(value: string) {

@@ -15,6 +15,8 @@ import {
   documentTypes,
   type AnalysisProvider,
   type DocumentType,
+  providerFallbackModes,
+  type ProviderFallbackMode,
   type RoleSetup,
 } from "@/types/document-intelligence";
 
@@ -34,6 +36,9 @@ export async function POST(request: Request) {
     const jobDescriptionFile = formData.get("jobDescriptionFile");
     const documentTypeValue = String(formData.get("documentType") || "auto");
     const providerValue = String(formData.get("provider") || "auto");
+    const providerFallbackModeValue = String(
+      formData.get("providerFallbackMode") || "cross-provider"
+    );
     const analysisGoal = String(formData.get("analysisGoal") || "").trim();
     const roleSetup = parseRoleSetup(formData.get("roleSetup"));
 
@@ -48,6 +53,9 @@ export async function POST(request: Request) {
       ? documentTypeValue
       : "auto";
     const provider = isAnalysisProvider(providerValue) ? providerValue : "auto";
+    const providerFallbackMode = isProviderFallbackMode(providerFallbackModeValue)
+      ? providerFallbackModeValue
+      : "cross-provider";
 
     const mergedAnalysisGoal = await buildMergedAnalysisGoal(
       analysisGoal,
@@ -58,6 +66,7 @@ export async function POST(request: Request) {
       file,
       documentType,
       provider,
+      providerFallbackMode,
       analysisGoal: mergedAnalysisGoal,
       roleSetup,
     });
@@ -124,6 +133,10 @@ function isDocumentType(value: string): value is DocumentType {
 
 function isAnalysisProvider(value: string): value is AnalysisProvider {
   return (analysisProviders as readonly string[]).includes(value);
+}
+
+function isProviderFallbackMode(value: string): value is ProviderFallbackMode {
+  return (providerFallbackModes as readonly string[]).includes(value);
 }
 
 function parseRoleSetup(value: FormDataEntryValue | null): RoleSetup | undefined {

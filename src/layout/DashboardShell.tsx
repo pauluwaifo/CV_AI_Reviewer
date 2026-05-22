@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 
+import WorkspaceAssistant from "@/components/workspace/WorkspaceAssistant";
 import { useSidebar } from "@/context/SidebarContext";
 import AppHeader from "@/layout/AppHeader";
 import AppSidebar from "@/layout/AppSidebar";
@@ -43,6 +44,7 @@ export default function DashboardShell({ children, session }: DashboardShellProp
         <main className={mainClassName}>
           {children}
         </main>
+        {session ? <WorkspaceAssistant session={{ role: session.role }} /> : null}
       </div>
     </div>
   );

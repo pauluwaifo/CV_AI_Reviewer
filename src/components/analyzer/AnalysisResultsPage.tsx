@@ -307,17 +307,22 @@ export default function AnalysisResultsPage() {
 
             {response.meta.provider === "local" ? (
               <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-700 dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-200">
-                <p>Enhanced local screening was used for this run.</p>
+                <p>Screening completed with the fallback analysis engine.</p>
                 <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  The report below is still based on the extracted CV and role benchmark, even if
-                  remote AI was slow or unavailable.
+                  The report below is still based on the extracted CV and role benchmark. A backup
+                  engine handled this run because the primary remote AI services were unavailable.
                 </p>
                 {response.meta.providerWarnings && response.meta.providerWarnings.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {response.meta.providerWarnings.slice(0, 2).map((warning) => (
-                      <MetaPill key={warning} label={formatProviderWarning(warning)} />
-                    ))}
-                  </div>
+                  <details className="mt-3 rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-800 dark:bg-gray-950/70">
+                    <summary className="cursor-pointer text-xs font-medium uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
+                      Technical note
+                    </summary>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {response.meta.providerWarnings.slice(0, 2).map((warning) => (
+                        <MetaPill key={warning} label={formatProviderWarning(warning)} />
+                      ))}
+                    </div>
+                  </details>
                 ) : null}
               </div>
             ) : null}

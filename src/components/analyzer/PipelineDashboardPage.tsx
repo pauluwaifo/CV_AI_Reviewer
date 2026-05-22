@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useWorkspace } from "@/context/WorkspaceContext";
 import {
@@ -1004,7 +1005,9 @@ export default function PipelineDashboardPage() {
                       tabIndex={0}
                       onClick={() => setActiveBuilderTarget("empty")}
                       onFocus={() => setActiveBuilderTarget("empty")}
-                      className="relative rounded-xl border border-dashed border-[var(--workspace-form-border)] bg-white p-8 text-center text-sm text-[var(--workspace-form-muted)] shadow-[0_2px_8px_rgba(60,64,67,0.08)] outline-hidden transition focus:border-[var(--workspace-form-accent)] dark:border-gray-800 dark:bg-gray-950 dark:text-gray-300"
+                      className={`relative rounded-xl border border-dashed border-[var(--workspace-form-border)] bg-white p-8 text-center text-sm text-[var(--workspace-form-muted)] shadow-[0_2px_8px_rgba(60,64,67,0.08)] outline-hidden transition focus:border-[var(--workspace-form-accent)] dark:border-gray-800 dark:bg-gray-950 dark:text-gray-300 ${
+                        activeBuilderTarget === "empty" ? "z-20" : "z-0"
+                      }`}
                     >
                       Start with a blank form. Tap here, then use the floating tools to add your
                       first question, or use Select template if you want a quick start.
@@ -1729,35 +1732,8 @@ export default function PipelineDashboardPage() {
           description="Use the role title, hiring brief, skill requirements, and an optional instruction to create an editable application form draft."
           onClose={() => setActiveBuilderModal(null)}
           maxWidthClassName="max-w-4xl"
-        >
-          <div className="space-y-5">
-            <textarea
-              value={aiFormPrompt}
-              onChange={(event) => setAiFormPrompt(event.target.value)}
-              placeholder="Optional instruction: Keep this short and technical, focus on project proof, and ask for availability."
-              className={`${inputClassName} min-h-40`}
-            />
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
-                {formFields.length > 0
-                  ? `The builder currently has ${formFields.length} editable field${formFields.length === 1 ? "" : "s"}. Generating a new draft will replace them.`
-                  : "The generated draft will load directly into the builder so you can review, edit, and publish it."}
-              </div>
-              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
-                {canGenerateFormDraft
-                  ? "AI uses your current role context first, then fills the rest with Gemini, Hugging Face, or the local fallback generator."
-                  : "Add a role title, brief, skill list, or a short instruction to unlock AI form generation."}
-              </div>
-            </div>
-
-            {formGenerationNote ? (
-              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-white px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
-                {formGenerationNote}
-              </div>
-            ) : null}
-
-            <div className="flex flex-col gap-3 border-t border-[var(--workspace-form-border-soft)] pt-5 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+          footer={
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <button
                 type="button"
                 onClick={() => setActiveBuilderModal(null)}
@@ -1788,6 +1764,34 @@ export default function PipelineDashboardPage() {
                 </button>
               </div>
             </div>
+          }
+        >
+          <div className="space-y-5">
+            <textarea
+              value={aiFormPrompt}
+              onChange={(event) => setAiFormPrompt(event.target.value)}
+              placeholder="Optional instruction: Keep this short and technical, focus on project proof, and ask for availability."
+              className={`${inputClassName} min-h-40`}
+            />
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
+                {formFields.length > 0
+                  ? `The builder currently has ${formFields.length} editable field${formFields.length === 1 ? "" : "s"}. Generating a new draft will replace them.`
+                  : "The generated draft will load directly into the builder so you can review, edit, and publish it."}
+              </div>
+              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-300">
+                {canGenerateFormDraft
+                  ? "AI uses your current role context first, then fills the rest with Gemini, Hugging Face, or the local fallback generator."
+                  : "Add a role title, brief, skill list, or a short instruction to unlock AI form generation."}
+              </div>
+            </div>
+
+            {formGenerationNote ? (
+              <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-white px-4 py-3 text-sm leading-6 text-[var(--workspace-form-muted)] dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+                {formGenerationNote}
+              </div>
+            ) : null}
           </div>
         </BuilderToolModal>
       ) : null}
@@ -1799,6 +1803,17 @@ export default function PipelineDashboardPage() {
           description="Use a real file, or create an editable JD draft from the role brief and screening criteria before you publish this form."
           onClose={() => setActiveBuilderModal(null)}
           maxWidthClassName="max-w-5xl"
+          footer={
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setActiveBuilderModal(null)}
+                className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+              >
+                Done
+              </button>
+            </div>
+          }
         >
           <div className="space-y-6">
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
@@ -1912,16 +1927,6 @@ export default function PipelineDashboardPage() {
                 ) : null}
               </div>
             </div>
-
-            <div className="flex justify-end border-t border-[var(--workspace-form-border-soft)] pt-5 dark:border-gray-800">
-              <button
-                type="button"
-                onClick={() => setActiveBuilderModal(null)}
-                className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-3 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
-              >
-                Done
-              </button>
-            </div>
           </div>
         </BuilderToolModal>
       ) : null}
@@ -1935,6 +1940,7 @@ function BuilderToolModal({
   description,
   onClose,
   children,
+  footer,
   maxWidthClassName = "max-w-4xl",
 }: {
   eyebrow: string;
@@ -1942,11 +1948,37 @@ function BuilderToolModal({
   description: string;
   onClose: () => void;
   children: ReactNode;
+  footer?: ReactNode;
   maxWidthClassName?: string;
 }) {
-  return (
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[140] flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -1954,9 +1986,9 @@ function BuilderToolModal({
         aria-modal="true"
         aria-label={title}
         onClick={(event) => event.stopPropagation()}
-        className={`w-full ${maxWidthClassName} max-h-[calc(100vh-3rem)] overflow-hidden rounded-2xl border border-[var(--workspace-form-border)] bg-[var(--workspace-form-page)] shadow-[0_28px_100px_rgba(0,0,0,0.45)] dark:border-gray-800 dark:bg-gray-950`}
+        className={`pointer-events-auto relative flex max-h-[calc(100vh-3rem)] w-full flex-col overflow-hidden rounded-2xl border border-[var(--workspace-form-border)] bg-[var(--workspace-form-page)] shadow-[0_28px_100px_rgba(0,0,0,0.45)] dark:border-gray-800 dark:bg-gray-950 ${maxWidthClassName}`}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-[var(--workspace-form-border-soft)] p-5 dark:border-gray-800 sm:p-6">
+        <div className="relative z-20 flex shrink-0 items-start justify-between gap-4 border-b border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-page)]/95 p-5 backdrop-blur-md dark:border-gray-800 dark:bg-gray-950/95 sm:p-6">
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
               {eyebrow}
@@ -1973,15 +2005,24 @@ function BuilderToolModal({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
+            className="inline-flex shrink-0 items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--workspace-form-muted)] transition hover:bg-[var(--workspace-form-surface)] dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5"
           >
             Close
           </button>
         </div>
 
-        <div className="max-h-[calc(100vh-12rem)] overflow-y-auto p-5 sm:p-6">{children}</div>
+        <div className="relative z-0 min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 sm:p-6">
+          {children}
+        </div>
+
+        {footer ? (
+          <div className="relative z-20 shrink-0 border-t border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-page)]/95 p-5 backdrop-blur-md dark:border-gray-800 dark:bg-gray-950/95 sm:p-6">
+            {footer}
+          </div>
+        ) : null}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2403,10 +2444,10 @@ function FormFieldBuilderCard({
       }}
       onDragOver={(event) => event.preventDefault()}
       onDragEnd={onDragEnd}
-      className={`group relative rounded-xl border bg-white p-4 shadow-[0_2px_8px_rgba(60,64,67,0.15)] transition hover:shadow-[0_6px_18px_rgba(60,64,67,0.2)] dark:bg-gray-950 ${
+      className={`group relative isolate rounded-xl border bg-white p-4 shadow-[0_2px_8px_rgba(60,64,67,0.15)] transition hover:z-10 hover:shadow-[0_6px_18px_rgba(60,64,67,0.2)] dark:bg-gray-950 ${
         isActive
-          ? "border-[var(--workspace-form-accent)]"
-          : "border-[var(--workspace-form-border)] dark:border-gray-800"
+          ? "z-20 border-[var(--workspace-form-accent)]"
+          : "z-0 border-[var(--workspace-form-border)] dark:border-gray-800"
       }`}
     >
       <div
@@ -2537,9 +2578,15 @@ function ContextualBuilderToolbar({
   }
 
   return (
-    <div className="absolute right-4 top-full z-20 mt-3 flex gap-2 rounded-full border border-[var(--workspace-form-border)] bg-white p-2 shadow-[0_10px_30px_rgba(60,64,67,0.18)] dark:border-gray-800 dark:bg-gray-950 sm:right-0 sm:top-5 sm:mt-0 sm:translate-x-[calc(100%+12px)] sm:flex-col">
+    <div
+      className="pointer-events-auto absolute right-4 top-full z-40 mt-3 flex gap-2 rounded-full border border-[var(--workspace-form-border)] bg-white p-2 shadow-[0_10px_30px_rgba(60,64,67,0.18)] dark:border-gray-800 dark:bg-gray-950 sm:right-0 sm:top-5 sm:mt-0 sm:translate-x-[calc(100%+12px)] sm:flex-col"
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onDragStart={(event) => event.preventDefault()}
+    >
       <button
         type="button"
+        draggable={false}
         onClick={(event) => {
           event.stopPropagation();
           onAddQuestion();
@@ -2551,6 +2598,7 @@ function ContextualBuilderToolbar({
       </button>
       <button
         type="button"
+        draggable={false}
         onClick={(event) => {
           event.stopPropagation();
           onAddLongText();

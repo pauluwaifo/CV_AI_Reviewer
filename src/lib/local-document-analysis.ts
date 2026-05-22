@@ -39,6 +39,21 @@ type SectionSignals = {
   hasQuantifiedEvidence: boolean;
 };
 
+type ResumeSignalHit = {
+  label: string;
+  evidence: string;
+  strength: "matched" | "partial";
+};
+
+type ResumeScreenSignals = {
+  achievementLines: string[];
+  explicitYears: number | null;
+  futureDateLines: string[];
+  matchedCriteria: ResumeSignalHit[];
+  recentRoleLines: string[];
+  topLines: string[];
+};
+
 const roleSkillCatalog = [
   "react",
   "next.js",
@@ -72,6 +87,37 @@ const roleSkillCatalog = [
   "data analysis",
 ] as const;
 
+const roleSkillAliases: Record<string, string[]> = {
+  react: ["react", "react.js"],
+  "next.js": ["next.js", "nextjs"],
+  typescript: ["typescript", "ts"],
+  javascript: ["javascript", "js", "ecmascript"],
+  "node.js": ["node.js", "nodejs", "node", "express"],
+  sql: ["sql", "postgres", "mysql", "query"],
+  postgresql: ["postgresql", "postgres", "psql"],
+  mysql: ["mysql"],
+  mongodb: ["mongodb", "mongo"],
+  aws: ["aws", "amazon web services"],
+  azure: ["azure"],
+  gcp: ["gcp", "google cloud"],
+  docker: ["docker", "container"],
+  kubernetes: ["kubernetes", "k8s"],
+  linux: ["linux", "ubuntu", "bash", "shell"],
+  windows: ["windows", "active directory", "microsoft 365"],
+  network: ["network", "networking", "lan", "wan", "tcp/ip"],
+  troubleshooting: ["troubleshooting", "diagnosis", "incident resolution", "root cause"],
+  "customer support": ["customer support", "customer service", "client support", "help desk"],
+  communication: ["communication", "stakeholder", "customer-facing", "presentation"],
+  excel: ["excel", "spreadsheets"],
+  "power bi": ["power bi", "powerbi"],
+  figma: ["figma"],
+  ui: ["ui", "user interface"],
+  ux: ["ux", "user experience"],
+  "product design": ["product design", "design systems", "wireframing"],
+  "project management": ["project management", "agile", "scrum", "kanban"],
+  "data analysis": ["data analysis", "analytics", "reporting", "dashboards"],
+};
+
 export function buildLocalAnalysis({
   text,
   documentType,
@@ -88,13 +134,18 @@ export function buildLocalAnalysis({
   const resolvedType = inferDocumentType(text, documentType);
   const facts = extractFacts(text, resolvedType);
   const sections = detectSections(text);
-  const redFlags = buildRedFlags(text, resolvedType, sections, facts);
+  const resumeSignals =
+    resolvedType === "cv"
+      ? analyzeResumeSignals(text, analysisGoal, roleSetup, facts)
+      : null;
+  const redFlags = buildRedFlags(text, resolvedType, sections, facts, resumeSignals);
   const highlights = buildHighlights(
     text,
     resolvedType,
     sections,
     facts,
-    pageCount
+    pageCount,
+    resumeSignals
   );
   const recommendedActions = buildRecommendedActions(
     resolvedType,
@@ -109,7 +160,8 @@ export function buildLocalAnalysis({
     sections,
     facts,
     analysisGoal,
-    roleSetup
+    roleSetup,
+    resumeSignals
   );
   const skillAssessments = buildSkillAssessments(roleMatch.criteria, roleSetup);
   const riskSignals = buildRiskSignals(redFlags, roleMatch.criteria);
@@ -119,7 +171,8 @@ export function buildLocalAnalysis({
     highlights,
     redFlags,
     roleMatch.criteria,
-    facts
+    facts,
+    resumeSignals
   );
   const interviewQuestions = buildInterviewQuestions(
     resolvedType,
@@ -132,7 +185,9 @@ export function buildLocalAnalysis({
     resolvedType,
     sections,
     facts,
-    redFlags
+    redFlags,
+    roleMatch.criteria,
+    resumeSignals
   );
   const scoreValue = Math.round(
     breakdown.reduce((sum, item) => sum + item.score, 0) / breakdown.length
@@ -149,7 +204,7 @@ export function buildLocalAnalysis({
       analysisGoal,
     }),
     recommendation: buildRecommendation(scoreValue, redFlags, roleMatch.criteria),
-    candidateProfile: buildCandidateProfile(text, facts),
+    candidateProfile: buildCandidateProfile(text, facts, resumeSignals),
     roleMatch,
     skillAssessments,
     riskSignals,
@@ -394,7 +449,8 @@ function buildHighlights(
   documentType: ResolvedDocumentType,
   sections: SectionSignals,
   facts: ExtractedFact[],
-  pageCount: number
+  pageCount: number,
+  resumeSignals: ResumeScreenSignals | null
 ) {
   const highlights: string[] = [];
   const wordCount = text.split(/\s+/).filter(Boolean).length;
@@ -414,6 +470,21 @@ function buildHighlights(
     }
     if (sections.hasQuantifiedEvidence) {
       highlights.push("The CV includes measurable signals such as years of experience, percentages, or outcome metrics.");
+    }
+    if (resumeSignals?.matchedCriteria.length) {
+      highlights.push(
+        `Role-aligned evidence appears for ${resumeSignals.matchedCriteria
+          .slice(0, 2)
+          .map((item) => item.label)
+          .join(" and ")}.`
+      );
+    }
+    if (resumeSignals?.achievementLines[0]) {
+      highlights.push(
+        `A concrete evidence line stands out: "${trimEvidenceSnippet(
+          resumeSignals.achievementLines[0]
+        )}".`
+      );
     }
   }
 
@@ -488,7 +559,8 @@ function buildRedFlags(
   text: string,
   documentType: ResolvedDocumentType,
   sections: SectionSignals,
-  facts: ExtractedFact[]
+  facts: ExtractedFact[],
+  resumeSignals: ResumeScreenSignals | null
 ) {
   const redFlags: string[] = [];
   const wordCount = text.split(/\s+/).filter(Boolean).length;
@@ -509,6 +581,18 @@ function buildRedFlags(
     }
     if (!sections.hasQuantifiedEvidence) {
       redFlags.push("Few measurable achievements or metrics were detected.");
+    }
+    if (resumeSignals?.futureDateLines.length) {
+      redFlags.push(
+        `One or more resume dates appear to be in the future, starting with "${trimEvidenceSnippet(
+          resumeSignals.futureDateLines[0]
+        )}", and should be clarified.`
+      );
+    }
+    if (resumeSignals && resumeSignals.achievementLines.length === 0) {
+      redFlags.push(
+        "The CV describes responsibilities, but there are limited concrete project or achievement lines to validate depth."
+      );
     }
   }
 
@@ -656,7 +740,8 @@ function buildRoleMatch(
   sections: SectionSignals,
   facts: ExtractedFact[],
   analysisGoal?: string,
-  roleSetup?: RoleSetup
+  roleSetup?: RoleSetup,
+  resumeSignals?: ResumeScreenSignals | null
 ): AnalysisResult["roleMatch"] {
   if (documentType !== "cv") {
     return {
@@ -670,7 +755,8 @@ function buildRoleMatch(
     text,
     sections,
     facts,
-    roleSetup
+    roleSetup,
+    resumeSignals ?? null
   );
   const matched = criteria.filter((item) => item.status === "matched").length;
   const partial = criteria.filter((item) => item.status === "partial").length;
@@ -699,7 +785,8 @@ function buildEvidencePoints(
   highlights: string[],
   redFlags: string[],
   roleCriteria: RoleCriterionMatch[],
-  facts: ExtractedFact[]
+  facts: ExtractedFact[],
+  resumeSignals: ResumeScreenSignals | null
 ): EvidencePoint[] {
   const evidence: EvidencePoint[] = [];
   const sentences = extractSentences(text);
@@ -731,6 +818,18 @@ function buildEvidencePoints(
         excerpt: "No clear supporting evidence for this requirement was found in the parsed CV text.",
         rationale: missingCriterion.evidence,
         tone: "concern",
+      });
+    }
+
+    for (const hit of resumeSignals?.matchedCriteria.slice(0, 2) ?? []) {
+      evidence.push({
+        title: `Role-fit evidence: ${hit.label}`,
+        excerpt: trimEvidenceSnippet(hit.evidence),
+        rationale:
+          hit.strength === "matched"
+            ? "This line provides direct evidence tied to the requested role criteria."
+            : "This line partially supports the requested role criteria but still needs validation.",
+        tone: hit.strength === "matched" ? "strength" : "neutral",
       });
     }
   }
@@ -889,10 +988,19 @@ function buildScoreBreakdown(
   documentType: ResolvedDocumentType,
   sections: SectionSignals,
   facts: ExtractedFact[],
-  redFlags: string[]
+  redFlags: string[],
+  roleCriteria: RoleCriterionMatch[],
+  resumeSignals: ResumeScreenSignals | null
 ): ScoreBreakdownItem[] {
   if (documentType === "cv") {
-    return buildCvScoreBreakdown(text, sections, facts, redFlags);
+    return buildCvScoreBreakdown(
+      text,
+      sections,
+      facts,
+      redFlags,
+      roleCriteria,
+      resumeSignals
+    );
   }
 
   const claritySignals = [
@@ -984,7 +1092,8 @@ function buildRecommendation(
 
 function buildCandidateProfile(
   text: string,
-  facts: ExtractedFact[]
+  facts: ExtractedFact[],
+  resumeSignals: ResumeScreenSignals | null
 ): CandidateProfile {
   const name = detectCandidateName(text);
   const headline = detectCandidateHeadline(text, name);
@@ -997,6 +1106,9 @@ function buildCandidateProfile(
     email ? { label: "Email", value: email } : null,
     phone ? { label: "Phone", value: phone } : null,
     link ? { label: "Profile link", value: link } : null,
+    resumeSignals?.matchedCriteria[0]
+      ? { label: "Role signal", value: resumeSignals.matchedCriteria[0].label }
+      : null,
   ].filter((item): item is NonNullable<typeof item> => item !== null);
 
   return {
@@ -1004,7 +1116,13 @@ function buildCandidateProfile(
     headline,
     summary:
       experience || headline
-        ? `${name} appears to bring ${experience ? experience.toLowerCase() : "relevant experience"} with a profile centered on ${headline.toLowerCase()}.`
+        ? `${name} appears to bring ${
+            experience ? experience.toLowerCase() : "relevant experience"
+          } with a profile centered on ${headline.toLowerCase()}${
+            resumeSignals?.matchedCriteria[0]
+              ? ` and evidence related to ${resumeSignals.matchedCriteria[0].label.toLowerCase()}`
+              : ""
+          }.`
         : `${name} has a parsed candidate profile, but the resume text does not expose many structured summary details.`,
     fields: fields.slice(0, 4),
   };
@@ -1087,34 +1205,47 @@ function buildCvScoreBreakdown(
   text: string,
   sections: SectionSignals,
   facts: ExtractedFact[],
-  redFlags: string[]
+  redFlags: string[],
+  roleCriteria: RoleCriterionMatch[],
+  resumeSignals: ResumeScreenSignals | null
 ): ScoreBreakdownItem[] {
+  const matchedCount = roleCriteria.filter((item) => item.status === "matched").length;
+  const partialCount = roleCriteria.filter((item) => item.status === "partial").length;
+  const missingCount = roleCriteria.filter((item) => item.status === "missing").length;
+  const achievementCount = resumeSignals?.achievementLines.length ?? 0;
+  const futureDateCount = resumeSignals?.futureDateLines.length ?? 0;
+  const explicitYears = resumeSignals?.explicitYears ?? extractCandidateYears(facts) ?? 0;
   const roleFit = clampScore(
-    50 +
-      (sections.hasExperience ? 14 : 0) +
-      (sections.hasSkills ? 14 : 0) +
-      (facts.some((fact) => fact.label === "Professional link") ? 6 : 0) +
-      (sections.hasEducation ? 5 : 0) -
-      (redFlags.some((item) => item.toLowerCase().includes("experience section")) ? 10 : 0)
+    42 +
+      matchedCount * 16 +
+      partialCount * 7 +
+      (sections.hasExperience ? 10 : 0) +
+      (sections.hasSkills ? 10 : 0) -
+      missingCount * 11
   );
 
-  const cvClarity = clampScore(
-    52 +
-      (sections.hasContactDetails ? 12 : 0) +
-      (facts.length >= 3 ? 8 : 0) +
-      (text.length >= 900 ? 8 : 0) -
-      (redFlags.length > 3 ? 8 : 0)
+  const experienceDepth = clampScore(
+    44 +
+      (sections.hasExperience ? 12 : 0) +
+      Math.min(explicitYears, 10) * 3 +
+      achievementCount * 4 -
+      futureDateCount * 8
   );
 
   const impactEvidence = clampScore(
-    44 +
-      (sections.hasQuantifiedEvidence ? 28 : 0) +
-      (facts.some((fact) => fact.label === "Experience signal") ? 8 : 0) -
-      (!sections.hasQuantifiedEvidence ? 10 : 0)
+    40 +
+      (sections.hasQuantifiedEvidence ? 20 : 0) +
+      achievementCount * 7 +
+      (resumeSignals?.matchedCriteria.length ?? 0) * 4 -
+      (!sections.hasQuantifiedEvidence ? 8 : 0)
   );
 
   const hiringRisk = clampScore(
-    88 - redFlags.length * 10 - missingCriticalCount("cv", sections) * 5
+    90 -
+      redFlags.length * 8 -
+      missingCriticalCount("cv", sections) * 5 -
+      missingCount * 5 -
+      futureDateCount * 8
   );
 
   return [
@@ -1127,12 +1258,12 @@ function buildCvScoreBreakdown(
           : "Role alignment is not yet clear enough from the visible experience and skills signals.",
     },
     {
-      category: "CV clarity",
-      score: cvClarity,
+      category: "Experience",
+      score: experienceDepth,
       note:
-        cvClarity >= 75
-          ? "Contact details, structure, and readable sections make this resume easy to screen."
-          : "The resume could be clearer or more complete for a fast recruiter pass.",
+        experienceDepth >= 75
+          ? "The CV shows enough depth, history, or experience range to support a serious interview review."
+          : "The visible experience is still too shallow, unclear, or unsupported for a confident decision.",
     },
     {
       category: "Evidence of impact",
@@ -1158,10 +1289,10 @@ function extractRoleCriteriaFromBrief(
   text: string,
   sections: SectionSignals,
   facts: ExtractedFact[],
-  roleSetup?: RoleSetup
+  roleSetup?: RoleSetup,
+  resumeSignals?: ResumeScreenSignals | null
 ): RoleCriterionMatch[] {
   const criteria: RoleCriterionMatch[] = [];
-  const lowerText = text.toLowerCase();
   const lowerGoal = analysisGoal?.toLowerCase().trim() || "";
   const normalizedMustHaves =
     roleSetup?.mustHaveSkills.map((skill) => skill.toLowerCase()) ?? [];
@@ -1169,13 +1300,7 @@ function extractRoleCriteriaFromBrief(
     roleSetup?.niceToHaveSkills.map((skill) => skill.toLowerCase()) ?? [];
 
   for (const skill of [...normalizedMustHaves, ...normalizedNiceToHaves].slice(0, 6)) {
-    criteria.push({
-      criterion: toTitleLabel(skill),
-      status: lowerText.includes(skill) ? "matched" : "missing",
-      evidence: lowerText.includes(skill)
-        ? `The structured role brief skill "${skill}" appears in the parsed resume text.`
-        : `The structured role brief includes "${skill}", but the parsed resume does not show clear evidence for it.`,
-    });
+    criteria.push(buildCriterionAssessment(skill, text, resumeSignals ?? null));
   }
 
   if (!lowerGoal && criteria.length === 0) {
@@ -1209,14 +1334,7 @@ function extractRoleCriteriaFromBrief(
     .slice(0, 4)
     .map((skill) => {
       const match: RoleCriterionMatch = {
-        criterion:
-          skill.toUpperCase() === "UI" || skill.toUpperCase() === "UX"
-            ? skill.toUpperCase()
-            : toTitleLabel(skill),
-        status: lowerText.includes(skill) ? "matched" : "missing",
-        evidence: lowerText.includes(skill)
-          ? `The skill or keyword "${skill}" appears in the parsed resume text.`
-          : `The hiring brief mentions "${skill}", but the parsed resume does not show clear evidence for it.`,
+        ...buildCriterionAssessment(skill, text, resumeSignals ?? null),
       };
 
       return match;
@@ -1226,7 +1344,7 @@ function extractRoleCriteriaFromBrief(
 
   const requiredYears = extractRequiredYears(lowerGoal);
   if (requiredYears !== null) {
-    const candidateYears = extractCandidateYears(facts);
+    const candidateYears = resumeSignals?.explicitYears ?? extractCandidateYears(facts);
     criteria.push({
       criterion: `${requiredYears}+ years relevant experience`,
       status:
@@ -1279,6 +1397,189 @@ function extractRoleCriteriaFromBrief(
   }
 
   return uniqueRoleCriteria(criteria).slice(0, 6);
+}
+
+function analyzeResumeSignals(
+  text: string,
+  analysisGoal: string | undefined,
+  roleSetup: RoleSetup | undefined,
+  facts: ExtractedFact[]
+): ResumeScreenSignals {
+  const topLines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+  const lines = text
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line.length >= 8 && line.length <= 220);
+  const combinedRoleBrief = [
+    analysisGoal,
+    roleSetup?.title,
+    roleSetup?.summary,
+    roleSetup?.mustHaveSkills.join(", "),
+    roleSetup?.niceToHaveSkills.join(", "),
+    roleSetup?.interviewFocus.join(", "),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return {
+    topLines,
+    recentRoleLines: lines
+      .filter((line) => /(engineer|developer|support|analyst|manager|specialist|designer|consultant|lead|administrator)/i.test(line))
+      .slice(0, 4),
+    achievementLines: uniqueStrings(
+      lines.filter(
+        (line) =>
+          /\b(improved|reduced|increased|built|led|managed|resolved|implemented|launched|delivered|optimized|automated)\b/i.test(
+            line
+          ) &&
+          (/\d/.test(line) || line.split(/\s+/).length >= 8)
+      )
+    ).slice(0, 5),
+    futureDateLines: uniqueStrings(lines.filter((line) => containsFutureDate(line))).slice(0, 3),
+    explicitYears: extractCandidateYears(facts) ?? extractYearsExperienceFromText(text),
+    matchedCriteria: extractMatchedResumeCriteria(lines, combinedRoleBrief),
+  };
+}
+
+function extractMatchedResumeCriteria(lines: string[], roleBriefText: string) {
+  const criteria = uniqueStrings([
+    ...extractRoleBriefCriteria(roleBriefText),
+  ]);
+
+  return criteria
+    .map((criterion) => {
+      const assessment = assessCriterionEvidence(lines, criterion);
+
+      return assessment
+        ? {
+            label: assessment.criterion,
+            evidence: assessment.evidence,
+            strength: assessment.status,
+          }
+        : null;
+    })
+    .filter((item): item is ResumeSignalHit => item !== null)
+    .slice(0, 6);
+}
+
+function extractRoleBriefCriteria(value: string) {
+  const normalized = value.toLowerCase();
+  const criteria = new Set<string>();
+
+  for (const skill of roleSkillCatalog) {
+    if (matchesCriterionAlias(normalized, skill)) {
+      criteria.add(skill);
+    }
+  }
+
+  for (const segment of normalized.split(/[\n,;|]/)) {
+    const cleaned = segment
+      .replace(/\b(must[- ]?have|nice[- ]?to[- ]?have|required|requirement|priority|priorities|focus on|focus)\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!cleaned || cleaned.length < 4 || cleaned.split(" ").length > 5) {
+      continue;
+    }
+
+    if (/[a-z]/.test(cleaned)) {
+      criteria.add(cleaned);
+    }
+  }
+
+  return [...criteria].slice(0, 8);
+}
+
+function buildCriterionAssessment(
+  criterion: string,
+  text: string,
+  resumeSignals: ResumeScreenSignals | null
+): RoleCriterionMatch {
+  const lines = resumeSignals?.recentRoleLines.length
+    ? [...resumeSignals.recentRoleLines, ...resumeSignals.achievementLines]
+    : text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 80);
+  const assessment = assessCriterionEvidence(lines, criterion);
+
+  if (assessment) {
+    return assessment;
+  }
+
+  return {
+    criterion: toTitleLabel(criterion),
+    status: "missing",
+    evidence: `The hiring brief includes "${criterion}", but the parsed resume does not show clear evidence for it.`,
+  };
+}
+
+function assessCriterionEvidence(lines: string[], criterion: string): RoleCriterionMatch | null {
+  const normalizedCriterion = criterion.toLowerCase().trim();
+  const directMatch = lines.find((line) => matchesCriterionAlias(line.toLowerCase(), normalizedCriterion));
+
+  if (directMatch) {
+    return {
+      criterion: toTitleLabel(normalizedCriterion),
+      status: "matched",
+      evidence: directMatch,
+    };
+  }
+
+  const tokens = normalizedCriterion
+    .split(/[^a-z0-9+.#]+/i)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 3);
+  const partialMatch = lines.find((line) => {
+    const normalizedLine = line.toLowerCase();
+    const tokenHits = tokens.filter((token) => normalizedLine.includes(token)).length;
+    return tokenHits >= Math.max(1, Math.ceil(tokens.length / 2));
+  });
+
+  if (partialMatch) {
+    return {
+      criterion: toTitleLabel(normalizedCriterion),
+      status: "partial",
+      evidence: partialMatch,
+    };
+  }
+
+  return null;
+}
+
+function matchesCriterionAlias(text: string, criterion: string) {
+  const aliases = roleSkillAliases[criterion] ?? [criterion];
+  return aliases.some((alias) => text.includes(alias));
+}
+
+function extractYearsExperienceFromText(text: string) {
+  const directYears = [...text.matchAll(/\b(\d{1,2})\+?\s*(?:years|yrs)\b/gi)]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value));
+
+  if (directYears.length > 0) {
+    return Math.max(...directYears);
+  }
+
+  return null;
+}
+
+function containsFutureDate(value: string) {
+  const currentYear = new Date().getFullYear();
+  const years = [...value.matchAll(/\b(20\d{2})\b/g)]
+    .map((match) => Number(match[1]))
+    .filter((year) => Number.isFinite(year));
+
+  return years.some((year) => year > currentYear);
+}
+
+function trimEvidenceSnippet(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 180);
 }
 
 function extractRequiredYears(value: string) {
