@@ -38,18 +38,36 @@ const resultsTabs: Array<{ id: ResultsTab; label: string }> = [
   { id: "compare", label: "Compare" },
 ];
 
-export default function AnalysisResultsPage() {
+export default function AnalysisResultsPage({
+  initialHistory = null,
+}: {
+  initialHistory?: StoredAnalysisSession[] | null;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const [activeTab, setActiveTab] = useState<ResultsTab>("overview");
   const [comparisonTargetId, setComparisonTargetId] = useState("");
-  const [history, setHistory] = useState<StoredAnalysisSession[]>([]);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [history, setHistory] = useState<StoredAnalysisSession[]>(initialHistory ?? []);
+  const [loadState, setLoadState] = useState<LoadState>(
+    initialHistory ? "ready" : "loading"
+  );
   const [error, setError] = useState<string | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState("");
   const requestedScreeningId = searchParams.get("screening") ?? "";
+  const requestedBatchIds = useMemo(
+    () => parseBatchIds(searchParams.get("batch")),
+    [searchParams]
+  );
+  const requestedBatchTotal = useMemo(
+    () => parsePositiveInteger(searchParams.get("batchTotal")),
+    [searchParams]
+  );
+  const requestedBatchFailed = useMemo(
+    () => parsePositiveInteger(searchParams.get("batchFailed")),
+    [searchParams]
+  );
 
   const loadScreenings = useCallback(async () => {
     setLoadState("loading");
@@ -81,8 +99,12 @@ export default function AnalysisResultsPage() {
   }, []);
 
   useEffect(() => {
+    if (initialHistory) {
+      return;
+    }
+
     void loadScreenings();
-  }, [loadScreenings]);
+  }, [initialHistory, loadScreenings]);
 
   useEffect(() => {
     if (loadState !== "ready") {
@@ -97,11 +119,36 @@ export default function AnalysisResultsPage() {
     }
 
     if (!requestedScreeningId || !history.some((item) => item.id === requestedScreeningId)) {
-      router.replace(`/results?screening=${encodeURIComponent(history[0].id)}`, {
-        scroll: false,
-      });
+      const firstAvailableBatchId = requestedBatchIds.find((screeningId) =>
+        history.some((item) => item.id === screeningId)
+      );
+      const fallbackScreeningId = firstAvailableBatchId ?? history[0]?.id;
+
+      if (!fallbackScreeningId) {
+        return;
+      }
+
+      router.replace(
+        buildResultsHref({
+          screeningId: fallbackScreeningId,
+          batchIds: firstAvailableBatchId ? requestedBatchIds : [],
+          batchTotal: requestedBatchTotal,
+          batchFailed: requestedBatchFailed,
+        }),
+        {
+          scroll: false,
+        }
+      );
     }
-  }, [history, loadState, requestedScreeningId, router]);
+  }, [
+    history,
+    loadState,
+    requestedBatchFailed,
+    requestedBatchIds,
+    requestedBatchTotal,
+    requestedScreeningId,
+    router,
+  ]);
 
   const session = useMemo(
     () =>
@@ -109,6 +156,13 @@ export default function AnalysisResultsPage() {
       history[0] ??
       null,
     [history, requestedScreeningId]
+  );
+  const batchSessions = useMemo(
+    () =>
+      requestedBatchIds
+        .map((screeningId) => history.find((item) => item.id === screeningId) ?? null)
+        .filter((item): item is StoredAnalysisSession => item !== null),
+    [history, requestedBatchIds]
   );
 
   if (loadState === "loading") {
@@ -171,11 +225,22 @@ export default function AnalysisResultsPage() {
     comparisonCandidates[0] ??
     null;
   const latestSession = history[0] ?? null;
+  const hasBatchContext = requestedBatchIds.length > 1 && batchSessions.length > 0;
 
   function openScreening(screeningId: string) {
-    router.replace(`/results?screening=${encodeURIComponent(screeningId)}`, {
-      scroll: false,
-    });
+    const shouldPreserveBatch = requestedBatchIds.includes(screeningId);
+
+    router.replace(
+      buildResultsHref({
+        screeningId,
+        batchIds: shouldPreserveBatch ? requestedBatchIds : [],
+        batchTotal: shouldPreserveBatch ? requestedBatchTotal : 0,
+        batchFailed: shouldPreserveBatch ? requestedBatchFailed : 0,
+      }),
+      {
+        scroll: false,
+      }
+    );
   }
 
   async function handleDeleteScreening(screeningId: string) {
@@ -253,6 +318,77 @@ export default function AnalysisResultsPage() {
         <div className="rounded-xl border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-200">
           {error}
         </div>
+      ) : null}
+
+      {hasBatchContext ? (
+        <section className="rounded-2xl border border-brand-200 bg-brand-50/80 p-5 shadow-theme-xs dark:border-brand-500/20 dark:bg-brand-500/10 sm:p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-brand-700 dark:text-brand-200">
+                Bulk screening complete
+              </p>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                {batchSessions.length} of {requestedBatchTotal || batchSessions.length} candidate
+                reviews are ready
+              </h2>
+              <p className="max-w-3xl text-sm leading-6 text-gray-700 dark:text-gray-200">
+                Open any screened CV from this batch below. Each candidate has their own saved
+                result page, recruiter workflow notes, and comparison access.
+                {requestedBatchFailed > 0
+                  ? ` ${requestedBatchFailed} file${requestedBatchFailed === 1 ? "" : "s"} did not finish screening in this run.`
+                  : ""}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href="/upload"
+                className="inline-flex items-center justify-center rounded-lg border border-brand-200 bg-white px-4 py-3 text-sm font-medium text-brand-700 transition hover:bg-brand-100 dark:border-brand-500/30 dark:bg-gray-950/60 dark:text-brand-200 dark:hover:bg-brand-500/10"
+              >
+                Screen another batch
+              </Link>
+              <button
+                type="button"
+                onClick={() => setActiveTab("compare")}
+                className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-3 text-sm font-medium text-white shadow-theme-xs transition hover:bg-brand-600"
+              >
+                Compare this batch
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {batchSessions.map((item) => {
+              const isActive = item.id === session.id;
+              const candidateLabel =
+                item.response.result.candidateProfile.name || item.response.meta.fileName;
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => openScreening(item.id)}
+                  className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition ${
+                    isActive
+                      ? "bg-brand-500 text-white"
+                      : "border border-gray-200 bg-white text-gray-700 hover:border-brand-200 hover:bg-brand-50 dark:border-gray-700 dark:bg-gray-950/70 dark:text-gray-200 dark:hover:border-brand-500/30 dark:hover:bg-brand-500/10"
+                  }`}
+                >
+                  <span className="max-w-[220px] truncate">{candidateLabel}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      isActive
+                        ? "bg-white/15 text-white"
+                        : "bg-gray-100 text-gray-600 dark:bg-gray-900 dark:text-gray-300"
+                    }`}
+                  >
+                    {item.response.result.score.value}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       ) : null}
 
       <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
@@ -388,6 +524,7 @@ export default function AnalysisResultsPage() {
             </p>
             <div className="mx-auto mt-3 max-w-[210px]">
               <ReactApexChart
+                key={`score-gauge-${session.id}-${scoreValue}`}
                 options={chartOptions}
                 series={[scoreValue]}
                 type="radialBar"
@@ -480,6 +617,7 @@ export default function AnalysisResultsPage() {
           <div className="mt-6">
             {activeTab === "overview" ? (
               <OverviewTab
+                key={`overview-${session.id}`}
                 isDark={isDark}
                 session={session}
                 roleMatchCounts={roleMatchCounts}
@@ -489,6 +627,7 @@ export default function AnalysisResultsPage() {
 
             {activeTab === "match" ? (
               <RoleMatchTab
+                key={`match-${session.id}`}
                 isDark={isDark}
                 session={session}
                 roleMatchCounts={roleMatchCounts}
@@ -497,6 +636,7 @@ export default function AnalysisResultsPage() {
 
             {activeTab === "skills" ? (
               <SkillsTab
+                key={`skills-${session.id}`}
                 isDark={isDark}
                 skillAssessments={response.result.skillAssessments}
                 riskSignals={response.result.riskSignals}
@@ -505,6 +645,7 @@ export default function AnalysisResultsPage() {
 
             {activeTab === "evidence" ? (
               <EvidenceTab
+                key={`evidence-${session.id}`}
                 evidencePoints={response.result.evidencePoints}
                 extractedFacts={response.result.extractedFacts}
               />
@@ -525,6 +666,7 @@ export default function AnalysisResultsPage() {
 
             {activeTab === "compare" ? (
               <CompareTab
+                key={`compare-${session.id}-${history.length}`}
                 isDark={isDark}
                 currentSession={session}
                 history={history}
@@ -1859,6 +2001,56 @@ function buildComparisonBarChartOptions(categories: string[], isDark: boolean): 
       enabled: false,
     },
   };
+}
+
+function buildResultsHref({
+  screeningId,
+  batchIds,
+  batchTotal,
+  batchFailed,
+}: {
+  screeningId: string;
+  batchIds: string[];
+  batchTotal: number;
+  batchFailed: number;
+}) {
+  const searchParams = new URLSearchParams({
+    screening: screeningId,
+  });
+
+  if (batchIds.length > 1) {
+    searchParams.set("batch", batchIds.join(","));
+
+    if (batchTotal > 0) {
+      searchParams.set("batchTotal", String(batchTotal));
+    }
+
+    if (batchFailed > 0) {
+      searchParams.set("batchFailed", String(batchFailed));
+    }
+  }
+
+  return `/results?${searchParams.toString()}`;
+}
+
+function parseBatchIds(value: string | null) {
+  if (!value) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function parsePositiveInteger(value: string | null) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function formatProviderLabel(provider: string, detail?: string) {

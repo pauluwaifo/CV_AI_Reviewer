@@ -10,6 +10,7 @@ import {
   getWorkspaceSettings,
   saveWorkspaceSettings,
 } from "@/lib/workspace-settings-store";
+import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { deleteWorkspace } from "@/lib/workspace-management-store";
 import type { WorkspaceSettings } from "@/lib/workspace-settings";
 
@@ -46,6 +47,19 @@ export async function PUT(request: Request) {
   try {
     const payload = (await request.json()) as Partial<WorkspaceSettings>;
     const settings = await saveWorkspaceSettings(session.workspaceId, payload);
+    await createWorkspaceAuditEvent({
+      action: "workspace.settings.updated",
+      actorEmail: session.email,
+      actorRole: session.role,
+      metadata: {
+        appName: settings.appName,
+        organizationName: settings.organizationName,
+      },
+      summary: "Updated workspace settings.",
+      targetId: session.workspaceId,
+      targetType: "workspace",
+      workspaceId: session.workspaceId,
+    }).catch(() => undefined);
 
     return NextResponse.json({ settings });
   } catch {
@@ -82,6 +96,17 @@ export async function DELETE(request: Request) {
         { status: 400 }
       );
     }
+
+    await createWorkspaceAuditEvent({
+      action: "workspace.deleted",
+      actorEmail: session.email,
+      actorRole: session.role,
+      metadata: {},
+      summary: "Deleted this workspace.",
+      targetId: session.workspaceId,
+      targetType: "workspace",
+      workspaceId: session.workspaceId,
+    }).catch(() => undefined);
 
     const deleted = await deleteWorkspace(session.workspaceId);
 

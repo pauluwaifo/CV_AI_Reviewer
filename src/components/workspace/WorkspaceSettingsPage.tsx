@@ -2,6 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import {
@@ -30,6 +31,25 @@ type WorkspaceMailConnectionSummary = {
   updatedAt: string | null;
 };
 
+type WorkspaceIntegrationEventOption = {
+  description: string;
+  label: string;
+  value: string;
+};
+
+type WorkspaceIntegrationSettings = {
+  enabledEvents: string[];
+  lastDeliveryAttemptAt: string | null;
+  lastDeliveryError: string;
+  lastDeliveryEvent: string;
+  lastDeliveryTarget: "" | "mixed" | "slack" | "webhook";
+  slackWebhookUrl: string;
+  updatedAt: string;
+  webhookSigningSecret: string;
+  webhookUrl: string;
+  workspaceId: string;
+};
+
 export default function WorkspaceSettingsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -40,6 +60,10 @@ export default function WorkspaceSettingsPage() {
   const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
   const [inviteAccessKey, setInviteAccessKey] = useState("");
   const [mailConnection, setMailConnection] = useState<WorkspaceMailConnectionSummary | null>(null);
+  const [integrationOptions, setIntegrationOptions] = useState<WorkspaceIntegrationEventOption[]>([]);
+  const [integrationSettings, setIntegrationSettings] = useState<WorkspaceIntegrationSettings>(
+    buildEmptyIntegrationSettings(settings.workspaceId)
+  );
   const [workspaceSenderEmail, setWorkspaceSenderEmail] = useState("");
   const [newWorkspaceAccessKey, setNewWorkspaceAccessKey] = useState("");
   const [resetAccessKey, setResetAccessKey] = useState("");
@@ -49,7 +73,9 @@ export default function WorkspaceSettingsPage() {
   const [isLoadingMailConnection, setIsLoadingMailConnection] = useState(true);
   const [isConnectingMailConnection, setIsConnectingMailConnection] = useState(false);
   const [isDisconnectingMailConnection, setIsDisconnectingMailConnection] = useState(false);
+  const [isLoadingIntegrations, setIsLoadingIntegrations] = useState(true);
   const [isResettingKey, setIsResettingKey] = useState(false);
+  const [isSavingIntegrations, setIsSavingIntegrations] = useState(false);
   const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
   const [updatingMemberId, setUpdatingMemberId] = useState("");
   const [feedback, setFeedback] = useState<{
@@ -95,6 +121,52 @@ export default function WorkspaceSettingsPage() {
     }
 
     void loadMembers();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [settings.workspaceId]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    async function loadIntegrationSettings() {
+      setIsLoadingIntegrations(true);
+
+      try {
+        const response = await fetch("/api/workspace/integrations", {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              options?: WorkspaceIntegrationEventOption[];
+              settings?: WorkspaceIntegrationSettings;
+            }
+          | null;
+
+        if (!isCurrent) {
+          return;
+        }
+
+        setIntegrationOptions(payload?.options ?? []);
+        setIntegrationSettings(
+          payload?.settings ?? buildEmptyIntegrationSettings(settings.workspaceId)
+        );
+      } catch {
+        if (!isCurrent) {
+          return;
+        }
+
+        setIntegrationOptions([]);
+        setIntegrationSettings(buildEmptyIntegrationSettings(settings.workspaceId));
+      } finally {
+        if (isCurrent) {
+          setIsLoadingIntegrations(false);
+        }
+      }
+    }
+
+    void loadIntegrationSettings();
 
     return () => {
       isCurrent = false;
@@ -594,6 +666,53 @@ export default function WorkspaceSettingsPage() {
     }
   }
 
+  async function handleSaveIntegrations() {
+    if (isSavingIntegrations) {
+      return;
+    }
+
+    setIsSavingIntegrations(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/workspace/integrations", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          enabledEvents: integrationSettings.enabledEvents,
+          slackWebhookUrl: integrationSettings.slackWebhookUrl,
+          webhookSigningSecret: integrationSettings.webhookSigningSecret,
+          webhookUrl: integrationSettings.webhookUrl,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { settings?: WorkspaceIntegrationSettings; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.settings) {
+        throw new Error(payload?.error || "I couldn't save those integration settings.");
+      }
+
+      setIntegrationSettings(payload.settings);
+      setFeedback({
+        tone: "success",
+        message: "Workspace integration settings saved.",
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "I couldn't save those integration settings.",
+      });
+    } finally {
+      setIsSavingIntegrations(false);
+    }
+  }
+
   return (
     <div className="w-full space-y-6 py-6 sm:py-8 md:py-10">
       <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
@@ -1024,6 +1143,195 @@ export default function WorkspaceSettingsPage() {
             handles the sign-in and approval flow, and the workspace starts sending invites from
             that inbox instead of the owner-wide mailbox.
           </div>
+        </article>
+      </section>
+
+      <section>
+        <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
+              Integrations
+            </p>
+            <h2 className="mt-2 text-xl font-semibold text-gray-900 dark:text-white">
+              Workspace notifications
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
+              Push workspace activity into your own systems or a Slack channel whenever candidates apply, workflow stages change, forms are updated, or billing succeeds.
+            </p>
+          </div>
+
+          {isLoadingIntegrations ? (
+            <div className="rounded-lg border border-dashed border-gray-300 px-4 py-4 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+              Loading integration settings...
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Field
+                  label="Webhook URL"
+                  help="This endpoint receives JSON payloads from the workspace when selected events happen."
+                >
+                  <input
+                    value={integrationSettings.webhookUrl}
+                    onChange={(event) =>
+                      setIntegrationSettings((current) => ({
+                        ...current,
+                        webhookUrl: event.target.value,
+                      }))
+                    }
+                    className={inputClassName}
+                    placeholder="https://yourdomain.com/api/workspace-events"
+                    type="url"
+                  />
+                </Field>
+                <Field
+                  label="Slack webhook URL"
+                  help="Optional. Send those same events into a Slack channel for fast recruiter visibility."
+                >
+                  <input
+                    value={integrationSettings.slackWebhookUrl}
+                    onChange={(event) =>
+                      setIntegrationSettings((current) => ({
+                        ...current,
+                        slackWebhookUrl: event.target.value,
+                      }))
+                    }
+                    className={inputClassName}
+                    placeholder="https://hooks.slack.com/services/..."
+                    type="url"
+                  />
+                </Field>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Field
+                  label="Signing secret"
+                  help="Optional. If set, the app signs each request with X-HRBoard-Signature."
+                >
+                  <input
+                    value={integrationSettings.webhookSigningSecret}
+                    onChange={(event) =>
+                      setIntegrationSettings((current) => ({
+                        ...current,
+                        webhookSigningSecret: event.target.value,
+                      }))
+                    }
+                    className={inputClassName}
+                    placeholder="Optional shared secret"
+                  />
+                </Field>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-4 text-sm leading-6 text-gray-600 dark:border-gray-800 dark:bg-gray-950/70 dark:text-gray-300">
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    Audit trail
+                  </p>
+                  <p className="mt-2">
+                    Integration setting changes are written to the workspace audit log automatically.
+                  </p>
+                  <Link
+                    href="/audit"
+                    className="mt-3 inline-flex items-center rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-white dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
+                  >
+                    Open audit log
+                  </Link>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                  Send these events
+                </p>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {integrationOptions.map((option) => {
+                    const checked = integrationSettings.enabledEvents.includes(option.value);
+
+                    return (
+                      <label
+                        key={option.value}
+                        className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-4 dark:border-gray-800 dark:bg-gray-950/70"
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            checked={checked}
+                            onChange={(event) =>
+                              setIntegrationSettings((current) => ({
+                                ...current,
+                                enabledEvents: event.target.checked
+                                  ? [...current.enabledEvents, option.value]
+                                  : current.enabledEvents.filter((item) => item !== option.value),
+                              }))
+                            }
+                            type="checkbox"
+                            className="mt-1 h-4 w-4 rounded border-slate-300"
+                          />
+                          <span className="space-y-1">
+                            <span className="block text-sm font-medium text-gray-900 dark:text-white">
+                              {option.label}
+                            </span>
+                            <span className="block text-xs leading-5 text-gray-500 dark:text-gray-400">
+                              {option.description}
+                            </span>
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-dashed border-gray-300 px-4 py-4 text-sm leading-6 text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                {integrationSettings.lastDeliveryAttemptAt ? (
+                  <>
+                    Last delivery attempt:{" "}
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      {formatDateTime(integrationSettings.lastDeliveryAttemptAt)}
+                    </span>
+                    {integrationSettings.lastDeliveryTarget ? (
+                      <>
+                        {" "}
+                        • Channel:{" "}
+                        <span className="font-medium text-gray-900 dark:text-white">
+                          {humanizeIntegrationTarget(integrationSettings.lastDeliveryTarget)}
+                        </span>
+                      </>
+                    ) : null}
+                    {integrationSettings.lastDeliveryEvent ? (
+                      <>
+                        {" "}
+                        • Event:{" "}
+                        <span className="font-medium text-gray-900 dark:text-white">
+                          {integrationSettings.lastDeliveryEvent}
+                        </span>
+                      </>
+                    ) : null}
+                    {integrationSettings.lastDeliveryError ? (
+                      <>
+                        {" "}
+                        • Latest error:{" "}
+                        <span className="font-medium text-error-700 dark:text-error-200">
+                          {integrationSettings.lastDeliveryError}
+                        </span>
+                      </>
+                    ) : (
+                      " • Latest delivery finished without an error."
+                    )}
+                  </>
+                ) : (
+                  "No webhook or Slack deliveries have been attempted yet."
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveIntegrations()}
+                  disabled={isSavingIntegrations}
+                  className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-5 py-3 text-sm font-medium text-white shadow-theme-xs transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300 dark:disabled:bg-brand-500/50"
+                >
+                  {isSavingIntegrations ? "Saving integrations..." : "Save integration settings"}
+                </button>
+              </div>
+            </>
+          )}
         </article>
       </section>
 
@@ -1469,4 +1777,42 @@ function formatDate(value: string) {
 
 function getColorInputValue(value: string) {
   return /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#0f766e";
+}
+
+function buildEmptyIntegrationSettings(workspaceId: string): WorkspaceIntegrationSettings {
+  return {
+    enabledEvents: [],
+    lastDeliveryAttemptAt: null,
+    lastDeliveryError: "",
+    lastDeliveryEvent: "",
+    lastDeliveryTarget: "",
+    slackWebhookUrl: "",
+    updatedAt: new Date().toISOString(),
+    webhookSigningSecret: "",
+    webhookUrl: "",
+    workspaceId,
+  };
+}
+
+function humanizeIntegrationTarget(value: WorkspaceIntegrationSettings["lastDeliveryTarget"]) {
+  if (value === "mixed") {
+    return "Webhook + Slack";
+  }
+
+  if (value === "slack") {
+    return "Slack";
+  }
+
+  if (value === "webhook") {
+    return "Webhook";
+  }
+
+  return "";
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }

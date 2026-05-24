@@ -16,6 +16,8 @@ import {
   sendWorkspaceMail,
   type MailDeliveryResult,
 } from "@/lib/mail-service";
+import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
+import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 
 export const runtime = "nodejs";
@@ -102,6 +104,27 @@ export async function POST(request: Request) {
       };
     }
 
+    await createWorkspaceAuditEvent({
+      action: "workspace.member.invited",
+      actorEmail: session.email,
+      actorRole: session.role,
+      metadata: {
+        email,
+        mailDelivery,
+        role,
+      },
+      summary: `Invited ${email} as ${role}.`,
+      targetId: invite.member.id,
+      targetType: "workspace_member",
+      workspaceId: session.workspaceId,
+    }).catch(() => undefined);
+    await emitWorkspaceIntegrationEvent(session.workspaceId, "workspace.member.invited", {
+      email,
+      memberId: invite.member.id,
+      role,
+      sender: session.email,
+    }).catch(() => undefined);
+
     return NextResponse.json({ ...invite, mailDelivery });
   } catch (error) {
     return NextResponse.json(
@@ -144,6 +167,19 @@ export async function PATCH(request: Request) {
       memberId,
       status,
     });
+    await createWorkspaceAuditEvent({
+      action: "workspace.member.status.updated",
+      actorEmail: session.email,
+      actorRole: session.role,
+      metadata: {
+        memberId,
+        status,
+      },
+      summary: `${status === "revoked" ? "Revoked" : "Restored"} member access.`,
+      targetId: memberId,
+      targetType: "workspace_member",
+      workspaceId: session.workspaceId,
+    }).catch(() => undefined);
 
     return NextResponse.json({ member });
   } catch (error) {

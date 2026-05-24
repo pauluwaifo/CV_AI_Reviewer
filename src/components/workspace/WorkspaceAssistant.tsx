@@ -30,6 +30,7 @@ type WorkspaceAssistantProps = {
   session: {
     role: "admin" | "member";
   };
+  initialOpen?: boolean;
 };
 
 type ScreeningIntakeStep = "role" | "criteria" | null;
@@ -37,6 +38,7 @@ type AssistantPosition = { x: number; y: number };
 
 const screeningAttachmentAccept =
   ".pdf,.txt,.log,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.rtf,.png,.jpg,.jpeg,.webp,.gif,.bmp";
+const maxAssistantBulkScreeningFiles = 25;
 const assistantBubbleSizePx = 64;
 const assistantEdgePaddingPx = 16;
 
@@ -64,7 +66,10 @@ function clampAssistantPosition(
   };
 }
 
-export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps) {
+export default function WorkspaceAssistant({
+  session,
+  initialOpen = false,
+}: WorkspaceAssistantProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { settings } = useWorkspace();
@@ -92,8 +97,8 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
       }),
     [pathname, session.role, settings.appName, settings.organizationName]
   );
-  const [isOpen, setIsOpen] = useState(false);
-  const [hasDismissedHint, setHasDismissedHint] = useState(false);
+  const [isOpen, setIsOpen] = useState(initialOpen);
+  const [hasDismissedHint, setHasDismissedHint] = useState(initialOpen);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<WorkspaceAssistantMessage[]>([
     { role: "assistant", content: welcomeMessage },
@@ -102,17 +107,22 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
   const [isScreeningAttachment, setIsScreeningAttachment] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
-  const [attachedScreeningFile, setAttachedScreeningFile] = useState<File | null>(null);
+  const [attachedScreeningFiles, setAttachedScreeningFiles] = useState<File[]>([]);
   const [screeningIntakeStep, setScreeningIntakeStep] = useState<ScreeningIntakeStep>(null);
   const [screeningRoleTarget, setScreeningRoleTarget] = useState("");
   const [screeningCriteria, setScreeningCriteria] = useState("");
+  const [screeningBatchProgress, setScreeningBatchProgress] = useState<{
+    current: number;
+    total: number;
+    fileName: string;
+  } | null>(null);
   const [assistantPosition, setAssistantPosition] = useState<AssistantPosition | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [isDraggingAssistant, setIsDraggingAssistant] = useState(false);
   const draftSuggestion = useMemo(() => {
     const normalizedDraft = draft.trim().toLowerCase();
 
-    if (!normalizedDraft || isSending || attachedScreeningFile) {
+    if (!normalizedDraft || isSending || attachedScreeningFiles.length > 0) {
       return null;
     }
 
@@ -123,7 +133,7 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
           prompt.length > draft.trim().length
       ) || null
     );
-  }, [attachedScreeningFile, draft, isSending, quickPrompts]);
+  }, [attachedScreeningFiles.length, draft, isSending, quickPrompts]);
   const draftSuggestionSuffix =
     draftSuggestion && draftSuggestion.toLowerCase().startsWith(draft.trim().toLowerCase())
       ? draftSuggestion.slice(draft.trim().length)
@@ -141,14 +151,15 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
     setError(null);
     setIsSending(false);
     setIsScreeningAttachment(false);
-    setIsOpen(false);
-    setHasDismissedHint(false);
+    setIsOpen(initialOpen);
+    setHasDismissedHint(initialOpen);
     setIsComposerFocused(false);
-    setAttachedScreeningFile(null);
+    setAttachedScreeningFiles([]);
     setScreeningIntakeStep(null);
     setScreeningRoleTarget("");
     setScreeningCriteria("");
-  }, [welcomeMessage, workspaceScope]);
+    setScreeningBatchProgress(null);
+  }, [initialOpen, welcomeMessage, workspaceScope]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -364,64 +375,120 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
   }
 
   async function handleScreenAttachment(roleTargetOverride?: string, criteriaOverride?: string) {
-    if (!attachedScreeningFile || isSending) {
+    if (attachedScreeningFiles.length === 0 || isSending) {
       return;
     }
 
+    const screeningFiles = [...attachedScreeningFiles];
     const resolvedRoleTarget = (roleTargetOverride ?? screeningRoleTarget).trim();
     const resolvedCriteria = (criteriaOverride ?? screeningCriteria).trim();
     const roleBrief = buildAssistantScreeningGoal(resolvedRoleTarget, resolvedCriteria);
     setError(null);
     setIsSending(true);
     setIsScreeningAttachment(true);
+    setScreeningBatchProgress({
+      current: 0,
+      total: screeningFiles.length,
+      fileName: "",
+    });
     setIsOpen(true);
     setHasDismissedHint(true);
 
     try {
-      const formData = new FormData();
-      formData.set("file", attachedScreeningFile);
-      formData.set("documentType", "cv");
-      formData.set("provider", "gemini");
-      formData.set("providerFallbackMode", "local-only");
-      formData.set(
-        "roleSetup",
-        JSON.stringify(buildAssistantRoleSetup(resolvedRoleTarget, resolvedCriteria))
-      );
+      const completedScreenings: StoredAnalysisSession[] = [];
+      const failedFiles: string[] = [];
+      let localFallbackCount = 0;
 
-      if (roleBrief) {
-        formData.set("analysisGoal", roleBrief);
+      for (const [index, file] of screeningFiles.entries()) {
+        setScreeningBatchProgress({
+          current: index + 1,
+          total: screeningFiles.length,
+          fileName: file.name,
+        });
+
+        try {
+          const formData = new FormData();
+          formData.set("file", file);
+          formData.set("documentType", "cv");
+          formData.set("provider", "gemini");
+          formData.set("providerFallbackMode", "local-only");
+          formData.set(
+            "roleSetup",
+            JSON.stringify(buildAssistantRoleSetup(resolvedRoleTarget, resolvedCriteria))
+          );
+
+          if (roleBrief) {
+            formData.set("analysisGoal", roleBrief);
+          }
+
+          const response = await fetch("/api/analyze", {
+            method: "POST",
+            body: formData,
+          });
+          const payload = (await response.json().catch(() => null)) as
+            | { screening?: StoredAnalysisSession; error?: string }
+            | null;
+
+          if (!response.ok) {
+            throw new Error(payload?.error || "I couldn't screen that attachment right now.");
+          }
+
+          if (!payload?.screening?.id) {
+            throw new Error("The screening completed, but I couldn't open the saved result.");
+          }
+
+          if (payload.screening.response.meta.provider === "local") {
+            localFallbackCount += 1;
+          }
+
+          completedScreenings.push(payload.screening);
+        } catch (screeningError) {
+          failedFiles.push(
+            screeningError instanceof Error
+              ? `${file.name}: ${screeningError.message}`
+              : `${file.name}: I couldn't screen that attachment right now.`
+          );
+        }
       }
 
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData,
+      if (completedScreenings.length === 0) {
+        throw new Error(
+          failedFiles.length > 1
+            ? `I couldn't finish any of those CV screenings. First issue: ${failedFiles[0]}`
+            : failedFiles[0] || "I couldn't screen that attachment right now."
+        );
+      }
+
+      const screeningIds = completedScreenings.map((item) => item.id);
+      const resultsHref = buildAssistantResultsHref({
+        screeningId: completedScreenings[0].id,
+        batchIds: screeningIds.length > 1 ? screeningIds : [],
+        batchTotal: screeningFiles.length,
+        batchFailed: failedFiles.length,
       });
-      const payload = (await response.json().catch(() => null)) as
-        | { screening?: StoredAnalysisSession; error?: string }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "I couldn't screen that attachment right now.");
-      }
-
-      if (!payload?.screening?.id) {
-        throw new Error("The screening completed, but I couldn't open the saved result.");
-      }
-
-      const completedFileName = attachedScreeningFile.name;
-      const resultsHref = `/results?screening=${encodeURIComponent(payload.screening.id)}`;
-      const usedLocalFallback = payload.screening.response.meta.provider === "local";
+      const completionSummary =
+        completedScreenings.length === 1
+          ? `Done screening ${completedScreenings[0].response.meta.fileName}.`
+          : `Done screening ${completedScreenings.length} CVs: ${summarizeAssistantFileNames(
+              completedScreenings.map((item) => item.response.meta.fileName)
+            )}.`;
+      const fallbackSummary =
+        localFallbackCount > 0
+          ? ` ${localFallbackCount} run${localFallbackCount === 1 ? "" : "s"} used the fallback screening engine.`
+          : "";
+      const failureSummary =
+        failedFiles.length > 0
+          ? ` ${failedFiles.length} file${failedFiles.length === 1 ? "" : "s"} did not finish in this batch.`
+          : "";
 
       setMessages((current) => [
         ...current,
         {
           role: "assistant",
-          content: usedLocalFallback
-            ? `Done screening ${completedFileName}. Remote AI was unavailable for this run, so I completed it with the fallback screening engine. Opening [Results](${resultsHref}) now.`
-            : `Done screening ${completedFileName}. Opening [Results](${resultsHref}) now.`,
+          content: `${completionSummary}${fallbackSummary}${failureSummary} Opening [Results](${resultsHref}) now.`,
         },
       ]);
-      setAttachedScreeningFile(null);
+      setAttachedScreeningFiles([]);
       setScreeningIntakeStep(null);
       setScreeningRoleTarget("");
       setScreeningCriteria("");
@@ -437,11 +504,17 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
     } finally {
       setIsSending(false);
       setIsScreeningAttachment(false);
+      setScreeningBatchProgress(null);
     }
   }
 
-  function handleScreeningAttachmentSelected(nextFile: File) {
-    setAttachedScreeningFile(nextFile);
+  function handleScreeningAttachmentSelected(nextFiles: File[]) {
+    const mergedFiles = mergeAssistantScreeningFiles(attachedScreeningFiles, nextFiles).slice(
+      0,
+      maxAssistantBulkScreeningFiles
+    );
+
+    setAttachedScreeningFiles(mergedFiles);
     setScreeningIntakeStep("role");
     setScreeningRoleTarget("");
     setScreeningCriteria("");
@@ -453,21 +526,27 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
       ...current,
       {
         role: "assistant",
-        content: `I have ${nextFile.name}. What role are you screening this CV for? You can reply with the job title, team, or a short hiring goal.`,
+        content:
+          mergedFiles.length === 1
+            ? `I have ${mergedFiles[0].name}. What role are you screening this CV for? You can reply with the job title, team, or a short hiring goal.`
+            : `I have ${mergedFiles.length} CVs ready: ${summarizeAssistantFileNames(
+                mergedFiles.map((file) => file.name)
+              )}. What role are you screening this batch for? You can reply with the job title, team, or a short hiring goal.`,
       },
     ]);
   }
 
   function clearScreeningAttachment() {
-    setAttachedScreeningFile(null);
+    setAttachedScreeningFiles([]);
     setScreeningIntakeStep(null);
     setScreeningRoleTarget("");
     setScreeningCriteria("");
+    setScreeningBatchProgress(null);
     setDraft("");
   }
 
   async function handleScreeningIntakeSubmit() {
-    if (!attachedScreeningFile || !screeningIntakeStep || isSending) {
+    if (attachedScreeningFiles.length === 0 || !screeningIntakeStep || isSending) {
       return;
     }
 
@@ -496,9 +575,13 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
 
     const normalizedCriteria = normalizeAssistantScreeningCriteria(responseText);
     const currentRoleTarget = screeningRoleTarget.trim();
+    const screeningSubject =
+      attachedScreeningFiles.length === 1
+        ? attachedScreeningFiles[0].name
+        : `${attachedScreeningFiles.length} CVs`;
     const progressMessage = normalizedCriteria
-      ? `Perfect. I’m screening ${attachedScreeningFile.name} for ${currentRoleTarget} with your criteria in mind now.`
-      : `Perfect. I’m screening ${attachedScreeningFile.name} for ${currentRoleTarget} now.`;
+      ? `Perfect. I'm screening ${screeningSubject} for ${currentRoleTarget} with your criteria in mind now.`
+      : `Perfect. I'm screening ${screeningSubject} for ${currentRoleTarget} now.`;
 
     setMessages((current) => [
       ...current,
@@ -514,12 +597,12 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (attachedScreeningFile && screeningIntakeStep) {
+    if (attachedScreeningFiles.length > 0 && screeningIntakeStep) {
       void handleScreeningIntakeSubmit();
       return;
     }
 
-    if (attachedScreeningFile) {
+    if (attachedScreeningFiles.length > 0) {
       void handleScreenAttachment();
       return;
     }
@@ -642,7 +725,9 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
                     <span className="inline-flex items-center gap-2">
                       <ShootingStarIcon className="h-4 w-4 fill-current" />
                       {isScreeningAttachment
-                        ? "Screening the attached CV and opening Results..."
+                        ? screeningBatchProgress
+                          ? `Screening ${screeningBatchProgress.current} of ${screeningBatchProgress.total}: ${screeningBatchProgress.fileName}`
+                          : "Screening the attached CVs and opening Results..."
                         : "Thinking through your workspace question..."}
                     </span>
                   </div>
@@ -657,7 +742,7 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
                 </div>
               ) : null}
 
-              {attachedScreeningFile ? (
+              {attachedScreeningFiles.length > 0 ? (
                 <div className="mb-3 flex items-start justify-between gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-gray-800 dark:bg-gray-900/70">
                   <div className="min-w-0 flex items-start gap-3">
                     <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-gray-500 shadow-theme-xs dark:bg-white/5 dark:text-gray-300">
@@ -665,11 +750,22 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-gray-800 dark:text-white/90">
-                        {attachedScreeningFile.name}
+                        {attachedScreeningFiles.length === 1
+                          ? attachedScreeningFiles[0].name
+                          : `${attachedScreeningFiles.length} CVs attached`}
                       </p>
+                      {attachedScreeningFiles.length > 1 ? (
+                        <p className="mt-1 truncate text-xs leading-5 text-gray-500 dark:text-gray-400">
+                          {summarizeAssistantFileNames(
+                            attachedScreeningFiles.map((file) => file.name)
+                          )}
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
                         {screeningIntakeStep === "role"
-                          ? "Next: tell the bot what role or hiring goal this CV should be screened for."
+                          ? attachedScreeningFiles.length === 1
+                            ? "Next: tell the bot what role or hiring goal this CV should be screened for."
+                            : "Next: tell the bot what role or hiring goal this batch should be screened for."
                           : screeningIntakeStep === "criteria"
                             ? `Next: add must-have skills or priorities for ${screeningRoleTarget}, or type "skip" for a general review.`
                             : "The bot has the role context already. Send now to run the screening and open the saved result page."}
@@ -682,7 +778,7 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
                     onClick={clearScreeningAttachment}
                     disabled={isSending}
                     className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-gray-200 bg-white text-gray-500 transition hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-300 dark:hover:bg-white/5"
-                    aria-label="Remove screening attachment"
+                    aria-label="Remove screening attachments"
                   >
                     <CloseLineIcon className="h-4 w-4 fill-current" />
                   </button>
@@ -694,21 +790,37 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
                   ref={attachmentInputRef}
                   type="file"
                   accept={screeningAttachmentAccept}
+                  multiple
                   className="sr-only"
                   onChange={(event) => {
-                    const nextFile = event.target.files?.[0] ?? null;
+                    const nextFiles = Array.from(event.target.files ?? []);
                     event.currentTarget.value = "";
 
-                    if (!nextFile) {
+                    if (nextFiles.length === 0) {
                       return;
                     }
 
-                    if (nextFile.size > maxUploadSizeBytes) {
-                      setError("That file is larger than 15 MB. Try a smaller export.");
+                    const oversizedFile = nextFiles.find((file) => file.size > maxUploadSizeBytes);
+                    const validFiles = nextFiles.filter((file) => file.size <= maxUploadSizeBytes);
+
+                    if (oversizedFile) {
+                      setError(`"${oversizedFile.name}" is larger than 15 MB. Try a smaller export.`);
+                    }
+
+                    if (validFiles.length === 0) {
                       return;
                     }
 
-                    handleScreeningAttachmentSelected(nextFile);
+                    if (
+                      attachedScreeningFiles.length + validFiles.length >
+                      maxAssistantBulkScreeningFiles
+                    ) {
+                      setError(
+                        `You can attach up to ${maxAssistantBulkScreeningFiles} CVs for one screening batch.`
+                      );
+                    }
+
+                    handleScreeningAttachmentSelected(validFiles);
                   }}
                 />
 
@@ -717,8 +829,8 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
                   onClick={() => attachmentInputRef.current?.click()}
                   disabled={isSending}
                   className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-gray-200 bg-gray-50 text-gray-500 transition hover:border-brand-200 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-brand-500/30 dark:hover:text-brand-200"
-                  aria-label="Attach CV for assistant screening"
-                  title="Attach CV for assistant screening"
+                  aria-label="Attach CVs for assistant screening"
+                  title="Attach CVs for assistant screening"
                 >
                   <FileIcon className="h-4 w-4 fill-current" />
                 </button>
@@ -751,12 +863,12 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
 
                         if (event.key === "Enter") {
                           event.preventDefault();
-                          if (attachedScreeningFile && screeningIntakeStep) {
+                          if (attachedScreeningFiles.length > 0 && screeningIntakeStep) {
                             void handleScreeningIntakeSubmit();
                             return;
                           }
 
-                          if (attachedScreeningFile) {
+                          if (attachedScreeningFiles.length > 0) {
                             void handleScreenAttachment();
                             return;
                           }
@@ -766,10 +878,12 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
                       }}
                       placeholder={
                         screeningIntakeStep === "role"
-                          ? "What role are you screening this CV for?"
+                          ? attachedScreeningFiles.length > 1
+                            ? "What role are you screening this batch for?"
+                            : "What role are you screening this CV for?"
                           : screeningIntakeStep === "criteria"
                             ? `What should I prioritize for ${screeningRoleTarget}?`
-                            : attachedScreeningFile
+                            : attachedScreeningFiles.length > 0
                               ? "Add anything else before I run the screening..."
                           : `Ask about ${currentPageLabel.toLowerCase()}...`
                       }
@@ -786,16 +900,16 @@ export default function WorkspaceAssistant({ session }: WorkspaceAssistantProps)
                     background: `linear-gradient(135deg, ${settings.dashboardAccent}, ${theme.accentHover})`,
                   }}
                   aria-label={
-                    attachedScreeningFile && screeningIntakeStep
+                    attachedScreeningFiles.length > 0 && screeningIntakeStep
                       ? "Continue screening intake"
-                      : attachedScreeningFile
-                      ? "Run assistant screening with this attachment"
+                      : attachedScreeningFiles.length > 0
+                      ? "Run assistant screening with these attachments"
                       : "Send message to workspace assistant"
                   }
                   title={
-                    attachedScreeningFile && screeningIntakeStep
+                    attachedScreeningFiles.length > 0 && screeningIntakeStep
                       ? "Continue screening intake"
-                      : attachedScreeningFile
+                      : attachedScreeningFiles.length > 0
                         ? "Run assistant screening"
                         : "Send message"
                   }
@@ -849,6 +963,71 @@ function buildAssistantScreeningGoal(roleTarget: string, criteria: string) {
   }
 
   return sections.join("\n\n").trim();
+}
+
+function buildAssistantResultsHref({
+  screeningId,
+  batchIds,
+  batchTotal,
+  batchFailed,
+}: {
+  screeningId: string;
+  batchIds: string[];
+  batchTotal: number;
+  batchFailed: number;
+}) {
+  const searchParams = new URLSearchParams({
+    screening: screeningId,
+  });
+
+  if (batchIds.length > 1) {
+    searchParams.set("batch", batchIds.join(","));
+    searchParams.set("batchTotal", String(batchTotal));
+
+    if (batchFailed > 0) {
+      searchParams.set("batchFailed", String(batchFailed));
+    }
+  }
+
+  return `/results?${searchParams.toString()}`;
+}
+
+function mergeAssistantScreeningFiles(currentFiles: File[], nextFiles: File[]) {
+  const merged = [...currentFiles];
+  const seenKeys = new Set(currentFiles.map((file) => buildAssistantScreeningFileKey(file)));
+
+  nextFiles.forEach((file) => {
+    const key = buildAssistantScreeningFileKey(file);
+
+    if (seenKeys.has(key)) {
+      return;
+    }
+
+    seenKeys.add(key);
+    merged.push(file);
+  });
+
+  return merged;
+}
+
+function buildAssistantScreeningFileKey(file: File) {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+function summarizeAssistantFileNames(fileNames: string[]) {
+  if (fileNames.length === 0) {
+    return "";
+  }
+
+  if (fileNames.length === 1) {
+    return fileNames[0];
+  }
+
+  if (fileNames.length === 2) {
+    return `${fileNames[0]} and ${fileNames[1]}`;
+  }
+
+  return `${fileNames[0]}, ${fileNames[1]}, and ${fileNames.length - 2} more`;
 }
 
 function buildAssistantRoleSetup(roleTarget: string, criteria: string) {

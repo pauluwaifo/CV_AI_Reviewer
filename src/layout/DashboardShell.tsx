@@ -3,8 +3,10 @@
 import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 
-import WorkspaceAssistant from "@/components/workspace/WorkspaceAssistant";
+import WorkspaceAssistantEntry from "@/components/workspace/WorkspaceAssistantEntry";
 import { useSidebar } from "@/context/SidebarContext";
+import { useWorkspace } from "@/context/WorkspaceContext";
+import { isWorkspaceModuleAccessible } from "@/lib/workspace-controls";
 import AppHeader from "@/layout/AppHeader";
 import AppSidebar from "@/layout/AppSidebar";
 import Backdrop from "@/layout/Backdrop";
@@ -24,11 +26,16 @@ type DashboardShellProps = {
 
 export default function DashboardShell({ children, session }: DashboardShellProps) {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
+  const { controls } = useWorkspace();
   const pathname = usePathname();
   const sidebarWidthClass =
     isExpanded || isHovered || isMobileOpen ? "lg:ml-[290px]" : "lg:ml-[90px]";
   const isWideWorkspacePage =
     pathname.startsWith("/pipeline") ||
+    pathname.startsWith("/candidate-mail") ||
+    pathname.startsWith("/billing") ||
+    pathname.startsWith("/analytics") ||
+    pathname.startsWith("/audit") ||
     pathname.startsWith("/results") ||
     pathname.startsWith("/workspace");
   const mainClassName = isWideWorkspacePage
@@ -44,7 +51,9 @@ export default function DashboardShell({ children, session }: DashboardShellProp
         <main className={mainClassName}>
           {children}
         </main>
-        {session ? <WorkspaceAssistant session={{ role: session.role }} /> : null}
+        {session && isWorkspaceModuleAccessible(controls, "assistant") ? (
+          <WorkspaceAssistantEntry session={{ role: session.role }} />
+        ) : null}
       </div>
     </div>
   );

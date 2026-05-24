@@ -248,7 +248,7 @@ Product behavior notes:
 - Results is where users revisit saved screening results and recruiter notes.
 - Hiring Pipeline is where users build forms, generate job descriptions or form drafts with AI, publish application flows, and review applicants.
 - Workspace Settings is admin-only and covers branding, team access, sender email connection, and security controls.
-- The workspace bot can also accept an attached CV, run screening for the user, and open the saved result page automatically.
+- The workspace bot can also accept one CV or a shortlist batch, run screening for the user, and open the saved result page automatically.
 - Sign-up now uses email verification before workspace creation.
 - Sign-in now uses a 6-digit second-factor code after the access key is accepted.
 - Workspace invite emails can come from a connected workspace inbox or a global fallback sender.
@@ -259,7 +259,7 @@ Response rules:
 - Answer app and workflow questions directly.
 - Whenever you reference a product page or tool, include a markdown link like [Hiring Pipeline](/pipeline).
 - When a user asks how to use a tool, explain it as a short intro followed by 2 to 5 numbered practical steps.
-- When the user asks about screening, CV review, or how to analyze a candidate, finish by offering to do the screening for them if they attach the CV in this chat.
+- When the user asks about screening, CV review, or how to analyze a candidate, finish by offering to do the screening for them if they attach the CV or shortlist in this chat.
 - When the current page matters, anchor the answer to what the user can do right here.
 - Mention role limits when relevant. Do not tell members they can use admin-only tools.
 - If the question is unrelated to this app, politely steer the conversation back to the workspace and hiring tools.
@@ -315,14 +315,14 @@ export function buildLocalWorkspaceAssistantReply({
     ])
   ) {
     return [
-      "Yes. You can attach a CV directly in this bot and let it run the screening for you.",
+      "Yes. You can attach one CV or a shortlist batch directly in this bot and let it run the screening for you.",
       "",
       "Step by step:",
-      "1. Click the file button beside the chat input and attach the candidate CV.",
-      "2. I will ask what role you are screening for.",
+      "1. Click the file button beside the chat input and attach one CV or several CVs.",
+      "2. I will ask what role or hiring goal you want the screening to use.",
       "3. I will ask what skills, priorities, or red flags I should use while screening.",
       "4. After you answer, I will run the analysis using the same screening engine as [Screen CV](/upload).",
-      "5. When the analysis finishes, you will be routed straight to [Results](/results) so you can review the saved screening.",
+      "5. When the analysis finishes, you will be routed straight to [Results](/results), and batch runs will open as a grouped review.",
     ].join("\n");
   }
 

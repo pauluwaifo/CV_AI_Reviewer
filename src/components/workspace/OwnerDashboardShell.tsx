@@ -5,9 +5,11 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
+import { ThemeToggleButton } from "@/components/common/ThemeToggleButton";
 import type { OwnerSession } from "@/lib/owner-auth";
 import {
   CloseIcon,
+  DollarLineIcon,
   GridIcon,
   GroupIcon,
   LockIcon,
@@ -40,6 +42,12 @@ const ownerNavItems = [
     path: "/owner/insights",
     icon: <PieChartIcon />,
   },
+  {
+    name: "Controls",
+    description: "Billing and release",
+    path: "/owner/controls",
+    icon: <DollarLineIcon />,
+  },
 ] as const;
 
 export default function OwnerDashboardShell({
@@ -53,6 +61,7 @@ export default function OwnerDashboardShell({
   const pathname = usePathname();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isDesktopNavOpen, setIsDesktopNavOpen] = useState(true);
   const activeItem =
     ownerNavItems.find((item) =>
       item.path === "/owner" ? pathname === item.path : pathname.startsWith(item.path)
@@ -60,6 +69,14 @@ export default function OwnerDashboardShell({
 
   function closeMobileNav() {
     setIsMobileNavOpen(false);
+  }
+
+  function closeDesktopNav() {
+    setIsDesktopNavOpen(false);
+  }
+
+  function toggleDesktopNav() {
+    setIsDesktopNavOpen((open) => !open);
   }
 
   async function handleSignOut() {
@@ -92,7 +109,7 @@ export default function OwnerDashboardShell({
       <aside
         className={`fixed left-0 top-0 z-50 flex h-dvh w-[290px] flex-col border-r border-gray-200 bg-white px-5 shadow-[18px_0_50px_rgba(15,23,42,0.04)] transition-transform duration-300 ease-in-out dark:border-gray-800 dark:bg-gray-950 ${
           isMobileNavOpen ? "translate-x-0" : "-translate-x-full"
-        } lg:translate-x-0`}
+        } ${isDesktopNavOpen ? "lg:translate-x-0" : "lg:-translate-x-full"}`}
       >
         <div className="border-b border-gray-100 py-6 dark:border-gray-800">
           <div className="flex items-start justify-between gap-3">
@@ -116,9 +133,15 @@ export default function OwnerDashboardShell({
 
             <button
               type="button"
-              onClick={closeMobileNav}
-              className="grid h-10 w-10 place-items-center rounded-lg border border-gray-200 text-gray-500 transition hover:bg-gray-50 dark:border-gray-800 dark:text-gray-300 dark:hover:bg-white/5 lg:hidden"
-              aria-label="Close owner navigation"
+              onClick={() => {
+                if (isMobileNavOpen) {
+                  closeMobileNav();
+                } else {
+                  closeDesktopNav();
+                }
+              }}
+              className="grid h-10 w-10 place-items-center rounded-lg border border-gray-200 text-gray-500 transition hover:bg-gray-50 dark:border-gray-800 dark:text-gray-300 dark:hover:bg-white/5"
+              aria-label="Close owner sidebar"
             >
               <CloseIcon className="h-5 w-5 fill-current" />
             </button>
@@ -186,7 +209,11 @@ export default function OwnerDashboardShell({
         </div>
       </aside>
 
-      <div className="lg:pl-[290px]">
+      <div
+        className={`transition-[padding] duration-300 ${
+          isDesktopNavOpen ? "lg:pl-[290px]" : "lg:pl-0"
+        }`}
+      >
         <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/90 backdrop-blur-xl dark:border-gray-800 dark:bg-gray-950/85">
           <div className="px-4 py-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -194,8 +221,16 @@ export default function OwnerDashboardShell({
                 <button
                   type="button"
                   onClick={() => setIsMobileNavOpen(true)}
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 lg:hidden"
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 lg:hidden"
                   aria-label="Open owner navigation"
+                >
+                  <MenuIcon />
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleDesktopNav}
+                  className="hidden h-11 w-11 shrink-0 place-items-center rounded-xl border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 lg:grid"
+                  aria-label={isDesktopNavOpen ? "Hide owner navigation" : "Show owner navigation"}
                 >
                   <MenuIcon />
                 </button>
@@ -203,25 +238,25 @@ export default function OwnerDashboardShell({
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
                     Owner Workspace
                   </p>
-                  <h1 className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
+                  <h1 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
                     {activeItem.name}
                   </h1>
                   <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                    {activeItem.description} for every company using your hiring platform.
+                    {activeItem.description}
                   </p>
                 </div>
               </div>
 
-              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+              <div className="flex w-full flex-wrap items-center justify-start gap-2 xl:ml-auto xl:w-auto xl:justify-end">
                 <Link
                   href="/workspace"
-                  className="inline-flex min-w-0 items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
+                  className="inline-flex min-w-[180px] items-center justify-center rounded-xl border border-gray-300 px-4 py-2.5 text-center text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
                 >
                   Open admin workspace
                 </Link>
                 <Link
                   href="/signup"
-                  className="inline-flex min-w-0 items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-center text-sm font-medium text-white transition hover:bg-brand-600"
+                  className="inline-flex min-w-[180px] items-center justify-center rounded-xl bg-brand-500 px-4 py-2.5 text-center text-sm font-medium text-white transition hover:bg-brand-600"
                 >
                   Create workspace
                 </Link>
@@ -229,10 +264,13 @@ export default function OwnerDashboardShell({
                   type="button"
                   onClick={() => void handleSignOut()}
                   disabled={isSigningOut}
-                  className="col-span-2 inline-flex min-w-0 items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5 sm:col-auto"
+                  className="inline-flex min-w-[132px] items-center justify-center rounded-xl border border-gray-300 px-4 py-2.5 text-center text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
                 >
                   {isSigningOut ? "Signing out..." : "Sign out"}
                 </button>
+                <div className="flex items-center justify-center">
+                  <ThemeToggleButton />
+                </div>
               </div>
             </div>
           </div>

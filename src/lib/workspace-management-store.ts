@@ -1,9 +1,13 @@
 import "server-only";
 
 import { deleteAuthChallengesByWorkspaceId } from "@/lib/auth-challenge-store";
+import { deleteCandidateEmailDraftsByWorkspaceId } from "@/lib/candidate-email-store";
+import { deleteLocalWorkspaceControlSettings } from "@/lib/local-workspace-control-store";
 import { deleteLocalWorkspaceAccessResetRequests } from "@/lib/local-workspace-access-reset-store";
 import { deleteLocalWorkspaceAccessRecord } from "@/lib/local-workspace-access-store";
+import { deleteLocalWorkspaceAuditEvents } from "@/lib/local-workspace-audit-store";
 import { deleteLocalWorkspaceHiringData } from "@/lib/local-hiring-funnel-store";
+import { deleteLocalWorkspaceIntegrationSettings } from "@/lib/local-workspace-integrations-store";
 import { deleteLocalWorkspaceMailConnection } from "@/lib/local-workspace-mail-store";
 import { deleteLocalWorkspaceMembers } from "@/lib/local-workspace-members-store";
 import { deleteLocalWorkspaceScreeningSessions } from "@/lib/local-screening-session-store";
@@ -29,7 +33,11 @@ export async function deleteWorkspace(workspaceId: string) {
       deleteLocalWorkspaceAccessRecord(normalizedWorkspaceId),
       deleteLocalWorkspaceMailConnection(normalizedWorkspaceId),
       deleteAuthChallengesByWorkspaceId(normalizedWorkspaceId),
+      deleteLocalWorkspaceControlSettings(normalizedWorkspaceId),
+      deleteLocalWorkspaceIntegrationSettings(normalizedWorkspaceId),
+      deleteLocalWorkspaceAuditEvents(normalizedWorkspaceId),
       deleteLocalWorkspaceSettings(normalizedWorkspaceId),
+      deleteCandidateEmailDraftsByWorkspaceId(normalizedWorkspaceId),
     ]);
 
     return results.some(Boolean);
@@ -60,6 +68,21 @@ export async function deleteWorkspace(workspaceId: string) {
         normalizedWorkspaceId,
       ]),
       client.query("DELETE FROM workspace_mail_connections WHERE workspace_id = $1", [
+        normalizedWorkspaceId,
+      ]),
+      client.query("DELETE FROM workspace_billing_transactions WHERE workspace_id = $1", [
+        normalizedWorkspaceId,
+      ]),
+      client.query("DELETE FROM workspace_control_settings WHERE workspace_id = $1", [
+        normalizedWorkspaceId,
+      ]),
+      client.query("DELETE FROM workspace_integration_settings WHERE workspace_id = $1", [
+        normalizedWorkspaceId,
+      ]),
+      client.query("DELETE FROM workspace_audit_events WHERE workspace_id = $1", [
+        normalizedWorkspaceId,
+      ]),
+      client.query("DELETE FROM candidate_email_drafts WHERE workspace_id = $1", [
         normalizedWorkspaceId,
       ]),
       client.query("DELETE FROM auth_challenges WHERE workspace_id = $1", [

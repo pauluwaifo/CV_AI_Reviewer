@@ -9,6 +9,8 @@ import {
   getPublicHiringForm,
   saveUploadedBinary,
 } from "@/lib/hiring-funnel-store";
+import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
+import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
 import type { ApplicantProfile } from "@/types/hiring-funnel";
 
 export const runtime = "nodejs";
@@ -115,6 +117,30 @@ export async function POST(
       resumeFile: storedFile,
       analysis,
     });
+    await createWorkspaceAuditEvent({
+      action: "application.created",
+      actorEmail: applicant.email,
+      actorRole: "member",
+      metadata: {
+        decision: application.analysis.result.recommendation.decision,
+        score: application.analysis.result.score.value,
+        stage: application.workflow.stage,
+      },
+      summary: `New application from ${applicant.fullName || applicant.email}.`,
+      targetId: application.id,
+      targetType: "application",
+      workspaceId: fullForm.workspaceId,
+    }).catch(() => undefined);
+    await emitWorkspaceIntegrationEvent(fullForm.workspaceId, "application.created", {
+      applicationId: application.id,
+      candidateEmail: applicant.email,
+      candidateName: applicant.fullName,
+      decision: application.analysis.result.recommendation.decision,
+      formId,
+      formTitle: fullForm.title,
+      score: application.analysis.result.score.value,
+      workflow: application.workflow,
+    }).catch(() => undefined);
 
     return NextResponse.json({
       applicationId: application.id,

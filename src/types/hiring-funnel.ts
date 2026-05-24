@@ -99,6 +99,56 @@ export interface StoredResumeFile {
   storagePath: string;
 }
 
+export type HiringApplicationStage =
+  | "new"
+  | "reviewing"
+  | "shortlisted"
+  | "interview"
+  | "offer"
+  | "hired"
+  | "rejected"
+  | "on_hold";
+
+export type HiringInterviewScorecardRecommendation =
+  | "pending"
+  | "advance"
+  | "lean_advance"
+  | "hold"
+  | "lean_reject"
+  | "reject";
+
+export interface HiringInterviewScorecardCriterion {
+  id: string;
+  label: string;
+  prompt: string;
+  score: number | null;
+  notes: string;
+}
+
+export interface HiringInterviewScorecard {
+  recommendation: HiringInterviewScorecardRecommendation;
+  overallNotes: string;
+  completedAt: string | null;
+  updatedAt: string;
+  criteria: HiringInterviewScorecardCriterion[];
+}
+
+export interface HiringApplicationWorkflow {
+  stage: HiringApplicationStage;
+  ownerEmail: string;
+  recruiterNotes: string;
+  nextStep: string;
+  tags: string[];
+  interviewPlan: string;
+  interviewKit: string[];
+  interviewDate: string | null;
+  interviewScorecard: HiringInterviewScorecard;
+  lastContactedAt: string | null;
+  automationSummary: string;
+  automationLog: string[];
+  updatedAt: string;
+}
+
 export interface HiringApplicationRecord {
   id: string;
   workspaceId: string;
@@ -107,6 +157,7 @@ export interface HiringApplicationRecord {
   applicant: ApplicantProfile;
   resumeFile: StoredResumeFile;
   analysis: AnalysisResponse;
+  workflow: HiringApplicationWorkflow;
 }
 
 export interface HiringFunnelStoreData {

@@ -13,6 +13,7 @@ import type {
 import type { StoredAnalysisSession } from "@/types/analysis-session";
 import { maxUploadSizeBytes } from "@/types/document-intelligence";
 
+const maxBulkScreeningFiles = 25;
 const providerOptions: Array<{ value: AnalysisProvider; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "gemini", label: "Gemini" },
@@ -39,7 +40,7 @@ const roleBriefPlaceholder =
 
 export default function UploadDocumentPage() {
   const router = useRouter();
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [jobDescriptionFile, setJobDescriptionFile] = useState<File | null>(null);
   const [provider, setProvider] = useState<AnalysisProvider>("auto");
   const [analysisGoal, setAnalysisGoal] = useState("");
@@ -52,42 +53,66 @@ export default function UploadDocumentPage() {
   const [interviewFocus, setInterviewFocus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    current: number;
+    total: number;
+    fileName: string;
+  } | null>(null);
   const documentType: DocumentType = "cv";
 
   const dropzone = useDropzone({
     accept: uploadAccept,
-    maxFiles: 1,
+    maxFiles: maxBulkScreeningFiles,
+    multiple: true,
     maxSize: maxUploadSizeBytes,
     noClick: true,
     noKeyboard: true,
     onDrop: (acceptedFiles) => {
-      const nextFile = acceptedFiles[0];
-
-      if (!nextFile) {
+      if (acceptedFiles.length === 0) {
         return;
       }
 
-      setFile(nextFile);
-      setError(null);
+      setFiles((current) => {
+        const merged = mergeSelectedFiles(current, acceptedFiles);
+        const nextFiles = merged.slice(0, maxBulkScreeningFiles);
+
+        if (merged.length > maxBulkScreeningFiles) {
+          setError(`You can screen up to ${maxBulkScreeningFiles} CVs at once.`);
+        } else {
+          setError(null);
+        }
+
+        return nextFiles;
+      });
     },
     onDropRejected: (rejections) => {
       const firstError = rejections[0]?.errors[0];
 
-      if (firstError?.code === "file-too-large") {
-        setError("That file is larger than 15 MB. Try a smaller export.");
+      if (firstError?.code === "too-many-files") {
+        setError(`You can screen up to ${maxBulkScreeningFiles} CVs at once.`);
         return;
       }
 
-      setError("Upload a PDF, text export, or image file for screening.");
+      if (firstError?.code === "file-too-large") {
+        setError("One of those files is larger than 15 MB. Try a smaller export.");
+        return;
+      }
+
+      setError("Upload PDF, text export, or image files for screening.");
     },
   });
 
   async function handleAnalyze() {
-    if (!file || isAnalyzing) {
+    if (files.length === 0 || isAnalyzing) {
       return;
     }
 
     setIsAnalyzing(true);
+    setBatchProgress({
+      current: 0,
+      total: files.length,
+      fileName: "",
+    });
     setError(null);
 
     try {
@@ -100,41 +125,79 @@ export default function UploadDocumentPage() {
         niceToHaveSkills,
         interviewFocus,
       });
-      const formData = new FormData();
-      formData.set("file", file);
-      formData.set("documentType", documentType);
-      formData.set("provider", provider);
-      formData.set("roleSetup", JSON.stringify(roleSetup));
-      if (jobDescriptionFile) {
-        formData.set("jobDescriptionFile", jobDescriptionFile);
+      const completedScreenings: StoredAnalysisSession[] = [];
+      const failedFiles: string[] = [];
+
+      for (const [index, file] of files.entries()) {
+        setBatchProgress({
+          current: index + 1,
+          total: files.length,
+          fileName: file.name,
+        });
+
+        try {
+          const formData = new FormData();
+          formData.set("file", file);
+          formData.set("documentType", documentType);
+          formData.set("provider", provider);
+          formData.set("roleSetup", JSON.stringify(roleSetup));
+          if (jobDescriptionFile) {
+            formData.set("jobDescriptionFile", jobDescriptionFile);
+          }
+
+          if (analysisGoal.trim()) {
+            formData.set("analysisGoal", analysisGoal.trim());
+          }
+
+          const result = await fetch("/api/analyze", {
+            method: "POST",
+            body: formData,
+          });
+
+          const payload = (await result.json().catch(() => null)) as
+            | { screening?: StoredAnalysisSession; error?: string }
+            | null;
+
+          if (!result.ok) {
+            throw new Error(
+              payload && "error" in payload && payload.error
+                ? payload.error
+                : "The analysis request failed."
+            );
+          }
+
+          if (!payload?.screening?.id) {
+            throw new Error("The analysis completed, but the screening record could not be saved.");
+          }
+
+          completedScreenings.push(payload.screening);
+        } catch (submissionError) {
+          failedFiles.push(
+            submissionError instanceof Error
+              ? `${file.name}: ${submissionError.message}`
+              : `${file.name}: The analysis request failed.`
+          );
+        }
       }
 
-      if (analysisGoal.trim()) {
-        formData.set("analysisGoal", analysisGoal.trim());
-      }
-
-      const result = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData,
-      });
-
-      const payload = (await result.json().catch(() => null)) as
-        | { screening?: StoredAnalysisSession; error?: string }
-        | null;
-
-      if (!result.ok) {
+      if (completedScreenings.length === 0) {
         throw new Error(
-          payload && "error" in payload && payload.error
-            ? payload.error
-            : "The analysis request failed."
+          failedFiles.length > 1
+            ? `All ${files.length} screenings failed. First issue: ${failedFiles[0]}`
+            : failedFiles[0] || "The analysis request failed."
         );
       }
 
-      if (!payload?.screening?.id) {
-        throw new Error("The analysis completed, but the screening record could not be saved.");
-      }
+      const screeningIds = completedScreenings.map((item) => item.id);
+      const batchHref = buildResultsHref({
+        screeningId: completedScreenings[0].id,
+        batchIds: screeningIds.length > 1 ? screeningIds : [],
+        batchTotal: files.length,
+        batchFailed: failedFiles.length,
+      });
 
-      router.push(`/results?screening=${encodeURIComponent(payload.screening.id)}`);
+      router.push(batchHref);
+      return;
     } catch (submissionError) {
       setError(
         submissionError instanceof Error
@@ -143,6 +206,7 @@ export default function UploadDocumentPage() {
       );
     } finally {
       setIsAnalyzing(false);
+      setBatchProgress(null);
     }
   }
 
@@ -153,15 +217,16 @@ export default function UploadDocumentPage() {
           Upload
         </p>
         <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-3xl">
-          Upload a candidate CV or resume file
+          Upload one CV or screen a full shortlist in bulk
         </h1>
         <p className="max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">
-          Use this flow for first-pass pre-employment vetting. Upload a PDF, text export, or image
-          and add the role brief if you want the screening score, role match, evidence, and
-          follow-up points tailored to a specific opening.
+          Use this flow for first-pass pre-employment vetting. Upload one or more CVs, add the
+          role brief once, and each saved review will get its own score, role match, evidence, and
+          follow-up points for the same opening.
         </p>
         <div className="flex flex-wrap gap-2">
           <Tag label="CV screening mode" />
+          <Tag label="Bulk shortlist screening" />
           <Tag label="Role matching" />
           <Tag label="Workspace screening history" />
           <Tag label="PDF, text, image" />
@@ -187,12 +252,14 @@ export default function UploadDocumentPage() {
 
             <div>
               <p className="break-words text-base font-semibold text-gray-900 dark:text-white">
-                {file ? file.name : "Drop the candidate file here or choose one manually"}
+                {files.length > 0
+                  ? `${files.length} CV${files.length === 1 ? "" : "s"} ready for screening`
+                  : "Drop candidate CVs here or choose them manually"}
               </p>
               <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
-                {file
-                  ? `${formatFileSize(file.size)} selected`
-                  : "Supported: PDF, TXT, MD, CSV, JSON, HTML, XML, RTF, PNG, JPG, WEBP, GIF, BMP."}
+                {files.length > 0
+                  ? `${describeSelectedFiles(files)} selected`
+                  : `Supported: PDF, TXT, MD, CSV, JSON, HTML, XML, RTF, PNG, JPG, WEBP, GIF, BMP. Up to ${maxBulkScreeningFiles} files per batch.`}
               </p>
             </div>
 
@@ -205,22 +272,67 @@ export default function UploadDocumentPage() {
                 }}
                 className="inline-flex w-full items-center justify-center rounded-2xl bg-brand-500 px-4 py-3 text-sm font-medium text-white shadow-theme-xs transition hover:bg-brand-600 sm:w-auto"
               >
-                Choose file
+                Choose CVs
               </button>
 
-              {file ? (
+              {files.length > 0 ? (
                 <button
                   type="button"
                   onClick={() => {
-                    setFile(null);
+                    setFiles([]);
                     setError(null);
                   }}
                   className="inline-flex w-full items-center justify-center rounded-2xl border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5 sm:w-auto"
                 >
-                  Clear
+                  Clear batch
                 </button>
               ) : null}
             </div>
+
+            {files.length > 0 ? (
+              <div className="rounded-2xl border border-gray-200 bg-white/80 p-3 dark:border-gray-800 dark:bg-gray-950/70">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
+                    Selected CVs
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {files.length} of {maxBulkScreeningFiles} max
+                  </p>
+                </div>
+                <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                  {files.map((selectedFile) => (
+                    <div
+                      key={buildSelectedFileKey(selectedFile)}
+                      className="flex items-start justify-between gap-3 rounded-2xl border border-gray-200 bg-white px-3 py-3 dark:border-gray-800 dark:bg-gray-900"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-900 dark:text-white">
+                          {selectedFile.name}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {formatFileSize(selectedFile.size)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFiles((current) =>
+                            current.filter(
+                              (fileItem) =>
+                                buildSelectedFileKey(fileItem) !==
+                                buildSelectedFileKey(selectedFile)
+                            )
+                          );
+                        }}
+                        className="inline-flex shrink-0 items-center justify-center rounded-xl border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-white/5"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -392,17 +504,33 @@ export default function UploadDocumentPage() {
         ) : null}
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm leading-6 text-gray-500 dark:text-gray-400">
-            The saved candidate review opens on its own page after screening completes.
-          </p>
+          <div className="space-y-1">
+            <p className="text-sm leading-6 text-gray-500 dark:text-gray-400">
+              {files.length > 1
+                ? "Each CV is screened one after another, saved to workspace history, and grouped for review in Results."
+                : "The saved candidate review opens on its own page after screening completes."}
+            </p>
+            {batchProgress ? (
+              <p className="text-sm font-medium text-brand-600 dark:text-brand-300">
+                Screening {batchProgress.current} of {batchProgress.total}
+                {batchProgress.fileName ? `: ${batchProgress.fileName}` : ""}
+              </p>
+            ) : null}
+          </div>
 
           <button
             type="button"
             onClick={handleAnalyze}
-            disabled={!file || isAnalyzing}
+            disabled={files.length === 0 || isAnalyzing}
             className="inline-flex w-full items-center justify-center rounded-2xl bg-brand-500 px-5 py-3 text-sm font-medium text-white shadow-theme-xs transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300 dark:disabled:bg-brand-500/50 sm:w-auto"
           >
-            {isAnalyzing ? "Screening..." : "Screen candidate"}
+            {isAnalyzing
+              ? files.length > 1
+                ? "Screening batch..."
+                : "Screening..."
+              : files.length > 1
+                ? `Screen ${files.length} candidates`
+                : "Screen candidate"}
           </button>
         </div>
       </section>
@@ -460,6 +588,64 @@ function formatFileSize(bytes: number) {
   }
 
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function buildSelectedFileKey(file: File) {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+function mergeSelectedFiles(currentFiles: File[], nextFiles: File[]) {
+  const merged = [...currentFiles];
+  const seenKeys = new Set(currentFiles.map((file) => buildSelectedFileKey(file)));
+
+  nextFiles.forEach((file) => {
+    const key = buildSelectedFileKey(file);
+
+    if (seenKeys.has(key)) {
+      return;
+    }
+
+    seenKeys.add(key);
+    merged.push(file);
+  });
+
+  return merged;
+}
+
+function describeSelectedFiles(files: File[]) {
+  if (files.length === 1) {
+    return `${formatFileSize(files[0].size)} ready`;
+  }
+
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  return `${formatFileSize(totalBytes)} across ${files.length} files`;
+}
+
+function buildResultsHref({
+  screeningId,
+  batchIds,
+  batchTotal,
+  batchFailed,
+}: {
+  screeningId: string;
+  batchIds: string[];
+  batchTotal: number;
+  batchFailed: number;
+}) {
+  const searchParams = new URLSearchParams({
+    screening: screeningId,
+  });
+
+  if (batchIds.length > 1) {
+    searchParams.set("batch", batchIds.join(","));
+    searchParams.set("batchTotal", String(batchTotal));
+
+    if (batchFailed > 0) {
+      searchParams.set("batchFailed", String(batchFailed));
+    }
+  }
+
+  return `/results?${searchParams.toString()}`;
 }
 
 function buildRoleSetup({

@@ -1,11 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
+import CandidateInterviewScorecardPanel from "@/components/analyzer/CandidateInterviewScorecardPanel";
+import CandidateWorkflowPanel from "@/components/analyzer/CandidateWorkflowPanel";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { describeHiringApplicationStage } from "@/lib/hiring-application-workflow";
 import {
   DEFAULT_HIRING_FORM_SCREENING_POLICY,
   evaluateHiringApplicationFilter,
@@ -31,16 +35,31 @@ type BuilderModal = "aiForm" | "jobDescription" | null;
 
 type FormTemplateId = "blank" | "general" | "technical" | "customer";
 
-export default function PipelineDashboardPage() {
+export default function PipelineDashboardPage({
+  initialForms = null,
+  initialSelectedForm = null,
+  initialSelectedFormId = "",
+}: {
+  initialForms?: HiringFormListItem[] | null;
+  initialSelectedForm?: HiringFormDetail | null;
+  initialSelectedFormId?: string;
+}) {
+  const searchParams = useSearchParams();
   const { settings } = useWorkspace();
-  const [forms, setForms] = useState<HiringFormListItem[]>([]);
-  const [selectedFormId, setSelectedFormId] = useState("");
-  const [selectedForm, setSelectedForm] = useState<HiringFormDetail | null>(null);
+  const [forms, setForms] = useState<HiringFormListItem[]>(initialForms ?? []);
+  const [selectedFormId, setSelectedFormId] = useState(initialSelectedFormId);
+  const [selectedForm, setSelectedForm] = useState<HiringFormDetail | null>(
+    initialSelectedForm
+  );
   const [selectedApplicationId, setSelectedApplicationId] = useState("");
   const [pipelineTab, setPipelineTab] = useState<PipelineTab>("create");
   const [builderView, setBuilderView] = useState<BuilderView>("questions");
-  const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [detailState, setDetailState] = useState<LoadState>("idle");
+  const [loadState, setLoadState] = useState<LoadState>(
+    initialForms ? "ready" : "loading"
+  );
+  const [detailState, setDetailState] = useState<LoadState>(
+    initialSelectedForm ? "ready" : initialSelectedFormId ? "loading" : "idle"
+  );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
@@ -188,6 +207,8 @@ export default function PipelineDashboardPage() {
     () => buildWorkspaceApiHeaders(settings.workspaceId),
     [settings.workspaceId]
   );
+  const requestedFormId = searchParams.get("form")?.trim() ?? "";
+  const requestedApplicationId = searchParams.get("application")?.trim() ?? "";
   const refreshForms = useCallback(async (nextSelectedFormId?: string) => {
     setLoadState("loading");
     setError(null);
@@ -208,7 +229,7 @@ export default function PipelineDashboardPage() {
 
       const nextForms = payload.forms ?? [];
       const targetId =
-        nextSelectedFormId || selectedFormId || nextForms[0]?.id || "";
+        nextSelectedFormId || requestedFormId || selectedFormId || nextForms[0]?.id || "";
 
       setForms(nextForms);
       setSelectedFormId(targetId);
@@ -226,7 +247,7 @@ export default function PipelineDashboardPage() {
       );
       setLoadState("ready");
     }
-  }, [selectedFormId, settings.workspaceId, workspaceHeaders]);
+  }, [requestedFormId, selectedFormId, settings.workspaceId, workspaceHeaders]);
 
   const loadFormDetail = useCallback(async (formId: string) => {
     setDetailState("loading");
@@ -251,6 +272,14 @@ export default function PipelineDashboardPage() {
 
       const nextForm = payload.form ?? null;
       setSelectedForm(nextForm);
+      const requestedApplicationMatches =
+        requestedApplicationId &&
+        nextForm?.applications.some((item) => item.id === requestedApplicationId);
+      setSelectedApplicationId(
+        requestedApplicationMatches
+          ? requestedApplicationId
+          : nextForm?.applications[0]?.id || ""
+      );
       setDetailState("ready");
     } catch (loadError) {
       setError(
@@ -258,11 +287,25 @@ export default function PipelineDashboardPage() {
       );
       setDetailState("ready");
     }
-  }, [settings.workspaceId, workspaceHeaders]);
+  }, [requestedApplicationId, settings.workspaceId, workspaceHeaders]);
 
   useEffect(() => {
+    if (initialForms) {
+      return;
+    }
+
     void refreshForms();
-  }, [refreshForms]);
+  }, [initialForms, refreshForms]);
+
+  useEffect(() => {
+    if (!requestedFormId || requestedFormId === selectedFormId) {
+      return;
+    }
+
+    if (forms.some((form) => form.id === requestedFormId)) {
+      setSelectedFormId(requestedFormId);
+    }
+  }, [forms, requestedFormId, selectedFormId]);
 
   useEffect(() => {
     if (!selectedFormId) {
@@ -271,8 +314,32 @@ export default function PipelineDashboardPage() {
       return;
     }
 
+    if (
+      initialSelectedForm &&
+      selectedFormId === initialSelectedForm.id &&
+      selectedForm?.id === initialSelectedForm.id
+    ) {
+      return;
+    }
+
     void loadFormDetail(selectedFormId);
-  }, [loadFormDetail, selectedFormId]);
+  }, [initialSelectedForm, loadFormDetail, selectedForm, selectedFormId]);
+
+  useEffect(() => {
+    if (!initialSelectedForm) {
+      return;
+    }
+
+    const requestedApplicationMatches =
+      requestedApplicationId &&
+      initialSelectedForm.applications.some((item) => item.id === requestedApplicationId);
+
+    setSelectedApplicationId(
+      requestedApplicationMatches
+        ? requestedApplicationId
+        : initialSelectedForm.applications[0]?.id || ""
+    );
+  }, [initialSelectedForm, requestedApplicationId]);
 
   useEffect(() => {
     setCopyLinkState("idle");
@@ -597,6 +664,21 @@ export default function PipelineDashboardPage() {
     } finally {
       setIsDeleting(null);
     }
+  }
+
+  function handleApplicationUpdated(updatedApplication: HiringApplicationRecord) {
+    setSelectedForm((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        applications: current.applications.map((application) =>
+          application.id === updatedApplication.id ? updatedApplication : application
+        ),
+      };
+    });
   }
 
   async function handleDeleteForm(formId: string) {
@@ -1703,6 +1785,7 @@ export default function PipelineDashboardPage() {
                             application={selectedApplication}
                             filterResult={applicationFilterResults.get(selectedApplication.id)}
                             isDeleting={isDeleting === selectedApplication.id}
+                            onApplicationUpdated={handleApplicationUpdated}
                             onDelete={() => void handleDeleteApplication(selectedApplication.id)}
                             questions={selectedForm.formFields}
                           />
@@ -2030,12 +2113,14 @@ function ApplicationReviewCard({
   application,
   filterResult,
   isDeleting,
+  onApplicationUpdated,
   onDelete,
   questions,
 }: {
   application: HiringApplicationRecord;
   filterResult?: ReturnType<typeof evaluateHiringApplicationFilter>;
   isDeleting: boolean;
+  onApplicationUpdated: (application: HiringApplicationRecord) => void;
   onDelete: () => void;
   questions: HiringFormDetail["formFields"];
 }) {
@@ -2083,7 +2168,7 @@ function ApplicationReviewCard({
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3 2xl:w-[360px]">
+            <div className="grid gap-3 sm:grid-cols-4 2xl:w-[480px]">
               <ReviewMetricCard
                 label="Decision"
                 value={application.analysis.result.recommendation.decision}
@@ -2091,6 +2176,10 @@ function ApplicationReviewCard({
               <ReviewMetricCard
                 label="Score"
                 value={String(application.analysis.result.score.value)}
+              />
+              <ReviewMetricCard
+                label="Stage"
+                value={describeHiringApplicationStage(application.workflow.stage)}
               />
               <ReviewMetricCard
                 label="Source"
@@ -2101,6 +2190,7 @@ function ApplicationReviewCard({
 
           <div className="flex flex-wrap gap-2">
             <MetaTag label={application.analysis.result.recommendation.confidence} />
+            <MetaTag label={describeHiringApplicationStage(application.workflow.stage)} />
             <MetaTag label={application.resumeFile.fileName} />
             {filterResult?.autoFiltered ? (
               <MetaTag label={`Filtered out at ${filterResult.roleMatchScore}/100`} />
@@ -2118,6 +2208,15 @@ function ApplicationReviewCard({
           >
             Download resume
           </a>
+          <Link
+            href={appendWorkspaceQuery(
+              `/candidate-mail?form=${encodeURIComponent(application.formId)}&application=${encodeURIComponent(application.id)}`,
+              settings.workspaceId
+            )}
+            className="inline-flex items-center justify-center rounded-lg border border-[var(--workspace-form-border)] bg-white px-4 py-2.5 text-sm font-medium text-[var(--workspace-form-title)] transition hover:bg-[var(--workspace-form-page)] dark:border-gray-700 dark:bg-transparent dark:text-white dark:hover:bg-white/5"
+          >
+            Open mail workspace
+          </Link>
           <button
             type="button"
             onClick={onDelete}
@@ -2174,6 +2273,18 @@ function ApplicationReviewCard({
           </div>
         </section>
       </div>
+
+      <CandidateWorkflowPanel
+        application={application}
+        onUpdated={onApplicationUpdated}
+        workspaceId={settings.workspaceId}
+      />
+
+      <CandidateInterviewScorecardPanel
+        application={application}
+        onUpdated={onApplicationUpdated}
+        workspaceId={settings.workspaceId}
+      />
 
       <div className="grid gap-4 2xl:grid-cols-2">
         <SignalPanel
@@ -2266,10 +2377,13 @@ function CandidateListItem({
             </span>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            <span className="rounded-full bg-[var(--workspace-form-surface)] px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--workspace-form-muted)] dark:bg-gray-950/60 dark:text-gray-300">
-              {application.analysis.result.recommendation.decision}
-            </span>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full bg-[var(--workspace-form-pill-bg)] px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--workspace-form-pill-text)] dark:bg-brand-500/15 dark:text-brand-200">
+                {describeHiringApplicationStage(application.workflow.stage)}
+              </span>
+              <span className="rounded-full bg-[var(--workspace-form-surface)] px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--workspace-form-muted)] dark:bg-gray-950/60 dark:text-gray-300">
+                {application.analysis.result.recommendation.decision}
+              </span>
             <span className="rounded-full bg-[var(--workspace-form-surface)] px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--workspace-form-muted)] dark:bg-gray-950/60 dark:text-gray-300">
               {application.analysis.meta.inputKind}
             </span>

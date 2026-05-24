@@ -27,6 +27,14 @@ import {
   getWorkspacePublicSnapshot,
   sanitizeWorkspaceId,
 } from "@/lib/workspace-settings";
+import {
+  buildInitialHiringApplicationWorkflow,
+  normalizeHiringApplicationWorkflow,
+} from "@/lib/hiring-application-workflow";
+import {
+  deleteLocalCandidateEmailDraftsByApplicationId,
+  deleteLocalCandidateEmailDraftsByFormId,
+} from "@/lib/local-candidate-email-store";
 import { getLocalWorkspaceAccessRecord } from "@/lib/local-workspace-access-store";
 import { getLocalWorkspaceSettings } from "@/lib/local-workspace-settings-store";
 
@@ -122,6 +130,20 @@ export async function getLocalHiringFormRecord(
 ): Promise<HiringFormRecord | null> {
   const store = await readStore();
   return store.forms.find((item) => item.id === formId) ?? null;
+}
+
+export async function getLocalHiringApplicationRecord(
+  applicationId: string,
+  workspaceId: string
+): Promise<HiringApplicationRecord | null> {
+  const store = await readStore();
+  const scopedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+
+  return (
+    store.applications.find(
+      (item) => item.id === applicationId && item.workspaceId === scopedWorkspaceId
+    ) ?? null
+  );
 }
 
 export async function createLocalHiringForm({
@@ -262,12 +284,47 @@ export async function createLocalHiringApplication({
     applicant,
     resumeFile,
     analysis,
+    workflow: buildInitialHiringApplicationWorkflow({
+      analysis,
+      roleSetup: form.roleSetup,
+      screeningPolicy: form.screeningPolicy,
+    }),
   };
 
   store.applications.unshift(application);
   await writeStore(store);
 
   return application;
+}
+
+export async function updateLocalHiringApplicationWorkflow({
+  applicationId,
+  workspaceId,
+  workflow,
+}: {
+  applicationId: string;
+  workspaceId: string;
+  workflow: HiringApplicationRecord["workflow"];
+}) {
+  const store = await readStore();
+  const scopedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+  const index = store.applications.findIndex(
+    (item) => item.id === applicationId && item.workspaceId === scopedWorkspaceId
+  );
+
+  if (index < 0) {
+    return null;
+  }
+
+  const current = store.applications[index];
+  const next: HiringApplicationRecord = {
+    ...current,
+    workflow: normalizeHiringApplicationWorkflow(workflow, current.workflow),
+  };
+
+  store.applications.splice(index, 1, next);
+  await writeStore(store);
+  return next;
 }
 
 export async function deleteLocalHiringApplication(
@@ -285,6 +342,7 @@ export async function deleteLocalHiringApplication(
   }
 
   store.applications = store.applications.filter((item) => item.id !== applicationId);
+  await deleteLocalCandidateEmailDraftsByApplicationId(scopedWorkspaceId, applicationId);
   await removeStoredFile(application.resumeFile.storagePath);
   await writeStore(store);
   return true;
@@ -344,6 +402,7 @@ export async function deleteLocalHiringForm(formId: string, workspaceId: string)
 
   store.forms = store.forms.filter((item) => item.id !== formId);
   store.applications = store.applications.filter((item) => item.formId !== formId);
+  await deleteLocalCandidateEmailDraftsByFormId(scopedWorkspaceId, formId);
   await writeStore(store);
   return true;
 }
@@ -601,6 +660,7 @@ function normalizeApplicationRecord(value: unknown): HiringApplicationRecord | n
     applicant: parsed.applicant as ApplicantProfile,
     resumeFile: parsed.resumeFile as StoredResumeFile,
     analysis: parsed.analysis as AnalysisResponse,
+    workflow: normalizeHiringApplicationWorkflow(parsed.workflow),
   };
 }
 

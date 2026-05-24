@@ -12,9 +12,12 @@ import {
   type WorkspaceAssistantContext,
   type WorkspaceAssistantMessage,
 } from "@/lib/workspace-assistant";
+import type { CandidateEmailKind } from "@/types/candidate-email";
 import type {
   HiringFormField,
   HiringFormFieldType,
+  HiringApplicationRecord,
+  HiringFormRecord,
 } from "@/types/hiring-funnel";
 import type {
   AnalysisProvider,
@@ -551,6 +554,81 @@ export async function generateWorkspaceAssistantReply({
   } catch (error) {
     return {
       reply: localReply,
+      provider: "local",
+      providerWarnings: extractProviderWarnings(error),
+    };
+  }
+}
+
+export async function generateCandidateEmailDraft({
+  kind,
+  application,
+  form,
+  organizationName,
+  appName,
+  prompt,
+  provider = "auto",
+}: {
+  kind: CandidateEmailKind;
+  application: HiringApplicationRecord;
+  form: HiringFormRecord | null;
+  organizationName: string;
+  appName: string;
+  prompt?: string;
+  provider?: AnalysisProvider;
+}): Promise<{
+  subject: string;
+  body: string;
+  provider: ResolvedProvider;
+  providerDetail?: string;
+  providerWarnings: string[];
+}> {
+  const localDraft = buildLocalCandidateEmailDraft({
+    kind,
+    application,
+    form,
+    organizationName,
+    prompt,
+  });
+
+  try {
+    const providerResult = await withProviderFallback(
+      provider,
+      async (activeProvider) => {
+        const state: ProviderRunState = {};
+        const raw = await generateWithProvider(
+          activeProvider,
+          state,
+          buildCandidateEmailDraftPrompt({
+            kind,
+            application,
+            form,
+            organizationName,
+            appName,
+            prompt,
+          })
+        );
+        const parsed = parseLooseJson(raw) as {
+          subject?: unknown;
+          body?: unknown;
+        };
+
+        return {
+          detail: state.detail,
+          value: normalizeGeneratedCandidateEmailDraft(parsed, localDraft),
+        };
+      }
+    );
+
+    return {
+      ...providerResult.value,
+      provider: providerResult.provider,
+      providerDetail: providerResult.detail || undefined,
+      providerWarnings: providerResult.warnings,
+    };
+  } catch (error) {
+    return {
+      ...localDraft,
       provider: "local",
       providerWarnings: extractProviderWarnings(error),
     };
@@ -1802,6 +1880,66 @@ Rules:
 `.trim();
 }
 
+function buildCandidateEmailDraftPrompt({
+  kind,
+  application,
+  form,
+  organizationName,
+  appName,
+  prompt,
+}: {
+  kind: CandidateEmailKind;
+  application: HiringApplicationRecord;
+  form: HiringFormRecord | null;
+  organizationName: string;
+  appName: string;
+  prompt?: string;
+}) {
+  return `
+You are drafting a professional candidate email for a recruiting workflow.
+
+Organization: ${organizationName.trim() || "The hiring team"}
+Product name: ${appName.trim() || "the hiring platform"}
+Email type: ${kind === "follow_up" ? "Follow-up" : "Rejection"}
+Role title: ${form?.roleSetup.title?.trim() || form?.title?.trim() || "Not provided"}
+Team: ${form?.team?.trim() || "Not provided"}
+Candidate name: ${getApplicationDisplayNameForPrompt(application)}
+Candidate email: ${application.applicant.email || "Not provided"}
+Candidate headline: ${application.analysis.result.candidateProfile.headline || "Not provided"}
+Decision: ${application.analysis.result.recommendation.decision}
+Confidence: ${application.analysis.result.recommendation.confidence}
+Score: ${application.analysis.result.score.value}/100
+Recommendation summary: ${application.analysis.result.recommendation.summary}
+Role-match summary: ${application.analysis.result.roleMatch.summary}
+Highlights:
+${formatPromptList(application.analysis.result.keyHighlights)}
+Concerns:
+${formatPromptList(application.analysis.result.redFlags)}
+Requested extra instruction:
+${prompt?.trim() || "No extra instruction provided."}
+
+Return strict JSON with this shape:
+{
+  "subject": "Email subject",
+  "body": "Plain-text email body"
+}
+
+Rules:
+- Write an email that is ready for a recruiter to review and send.
+- Keep the tone human, professional, and specific to the candidate.
+- Use the candidate's first name when known.
+- Use plain text paragraphs, not markdown bullets or tables.
+- If this is a rejection email, be warm, concise, and avoid discriminatory or overly specific legal claims.
+- If this is a follow-up email, make the next step clear and easy to act on.
+- Ground the email in the actual screening result above.
+- Do not invent interview times, salary details, benefits, or guarantees.
+- End with a simple recruiter sign-off from ${organizationName.trim() || "the hiring team"}.
+- Keep the subject under 90 characters.
+- Keep the body between 120 and 260 words.
+- Output valid JSON only with double quotes.
+`.trim();
+}
+
 function buildSharedInstructions(
   provider: RemoteProvider,
   documentType: DocumentType,
@@ -2174,6 +2312,25 @@ function normalizeGeneratedHiringFormDraft(
   };
 }
 
+function normalizeGeneratedCandidateEmailDraft(
+  value: unknown,
+  fallback: {
+    subject: string;
+    body: string;
+  }
+) {
+  if (!value || typeof value !== "object") {
+    return fallback;
+  }
+
+  const parsed = value as Record<string, unknown>;
+
+  return {
+    subject: normalizeCandidateEmailSubject(parsed.subject, fallback.subject),
+    body: normalizeCandidateEmailBody(parsed.body, fallback.body),
+  };
+}
+
 function buildLocalJobDescriptionDraft({
   title,
   team,
@@ -2311,6 +2468,83 @@ function buildLocalHiringFormDraft({
       ) || `Screen applicants for ${resolvedRoleTitle}.`,
     roleSetup: resolvedRoleSetup,
     formFields: buildLocalGeneratedFormFields(formKind, resolvedRoleTitle, resolvedRoleSetup),
+  };
+}
+
+function buildLocalCandidateEmailDraft({
+  kind,
+  application,
+  form,
+  organizationName,
+  prompt,
+}: {
+  kind: CandidateEmailKind;
+  application: HiringApplicationRecord;
+  form: HiringFormRecord | null;
+  organizationName: string;
+  prompt?: string;
+}) {
+  const candidateName = getApplicationDisplayNameForPrompt(application);
+  const firstName = getFirstName(candidateName);
+  const roleTitle = form?.roleSetup.title?.trim() || form?.title?.trim() || "the role";
+  const recommendationSummary =
+    application.analysis.result.recommendation.summary || application.analysis.result.summary;
+  const highlights = uniqueStringList(application.analysis.result.keyHighlights).slice(0, 2);
+  const concerns = uniqueStringList(application.analysis.result.redFlags).slice(0, 2);
+  const recruiterNote = prompt?.trim();
+
+  if (kind === "follow_up") {
+    return {
+      subject: `Next steps for your ${roleTitle} application`,
+      body: [
+        `Hi ${firstName},`,
+        "",
+        `Thank you again for your application for the ${roleTitle} role with ${organizationName}. We have reviewed your background and would like to keep the process moving.`,
+        "",
+        recommendationSummary
+          ? ensureSentence(recommendationSummary)
+          : `Your CV showed encouraging alignment for the role, including ${joinEmailHighlights(highlights) || "relevant strengths"}.`,
+        concerns.length > 0
+          ? `Before we move ahead, we would like to clarify ${joinEmailHighlights(concerns)}.`
+          : "The next step is a short follow-up so we can confirm role fit and answer any remaining questions.",
+        recruiterNote
+          ? `Additional recruiter note: ${ensureSentence(recruiterNote)}`
+          : "Please reply with your current availability and anything you would like us to know before the next stage.",
+        "",
+        "We appreciate your time and look forward to hearing from you.",
+        "",
+        "Best regards,",
+        `${organizationName} hiring team`,
+      ].join("\n"),
+    };
+  }
+
+  return {
+    subject: `Update on your ${roleTitle} application`,
+    body: [
+      `Hi ${firstName},`,
+      "",
+      `Thank you for your interest in the ${roleTitle} role with ${organizationName} and for the time you invested in applying.`,
+      "",
+      "We have completed our current review and will not be moving your application forward for this opening.",
+      highlights.length > 0
+        ? `We appreciated strengths such as ${joinEmailHighlights(highlights)}.`
+        : "We appreciate the effort that went into your application.",
+      concerns.length > 0
+        ? `The biggest gap for this opening was ${joinEmailHighlights(concerns)}.`
+        : "At this stage, the closest match came down to fit against the role's immediate needs.",
+      application.analysis.result.score.value >= 70
+        ? "We would be glad to keep your profile in mind for similar opportunities."
+        : "We encourage you to apply again if a future opening matches your experience more closely.",
+      recruiterNote ? `Additional recruiter note: ${ensureSentence(recruiterNote)}` : "",
+      "",
+      "Thank you again for your interest, and we wish you the best in your search.",
+      "",
+      "Best regards,",
+      `${organizationName} hiring team`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
   };
 }
 
@@ -2741,6 +2975,76 @@ function firstSentenceAsBullet(value: string | undefined) {
   const normalized = value.replace(/\s+/g, " ").trim();
   const [sentence] = normalized.split(/(?<=[.!?])\s+/);
   return sentence?.trim() || normalized;
+}
+
+function normalizeCandidateEmailSubject(value: unknown, fallback: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length >= 6 ? normalized.slice(0, 120) : fallback;
+}
+
+function normalizeCandidateEmailBody(value: unknown, fallback: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.replace(/\r/g, "").trim();
+  return normalized.length >= 80 ? normalized : fallback;
+}
+
+function getApplicationDisplayNameForPrompt(application: HiringApplicationRecord) {
+  const name =
+    application.applicant.fullName ||
+    application.analysis.result.candidateProfile.name ||
+    "";
+
+  return name.trim() || "the candidate";
+}
+
+function getFirstName(name: string) {
+  const normalized = name.replace(/\s+/g, " ").trim();
+  return normalized.split(" ")[0] || "there";
+}
+
+function formatPromptList(items: string[]) {
+  if (!items.length) {
+    return "- None noted";
+  }
+
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
+function joinEmailHighlights(items: string[]) {
+  const cleaned = items
+    .map((item) => item.replace(/\.$/, "").trim())
+    .filter(Boolean);
+
+  if (cleaned.length === 0) {
+    return "";
+  }
+
+  if (cleaned.length === 1) {
+    return cleaned[0];
+  }
+
+  if (cleaned.length === 2) {
+    return `${cleaned[0]} and ${cleaned[1]}`;
+  }
+
+  return `${cleaned.slice(0, -1).join(", ")}, and ${cleaned[cleaned.length - 1]}`;
+}
+
+function ensureSentence(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
 }
 
 function parseLooseJson(raw: string) {

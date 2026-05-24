@@ -10,12 +10,19 @@ import {
   type WorkspaceSettings,
   WORKSPACE_SETTINGS_STORAGE_KEY,
 } from "@/lib/workspace-settings";
+import {
+  parseWorkspaceControlSettings,
+  type WorkspaceControlSettings,
+} from "@/lib/workspace-controls";
 
 type WorkspaceContextType = {
   settings: WorkspaceSettings;
+  controls: WorkspaceControlSettings;
   updateSettings: (updates: Partial<WorkspaceSettings>) => void;
   replaceSettings: (nextSettings: WorkspaceSettings) => void;
   resetSettings: () => void;
+  updateControls: (updates: Partial<WorkspaceControlSettings>) => void;
+  replaceControls: (nextControls: WorkspaceControlSettings) => void;
 };
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
@@ -23,19 +30,34 @@ const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefin
 export function WorkspaceProvider({
   children,
   initialSettings = DEFAULT_WORKSPACE_SETTINGS,
+  initialControls,
 }: {
   children: ReactNode;
   initialSettings?: WorkspaceSettings;
+  initialControls?: WorkspaceControlSettings;
 }) {
   const parsedInitialSettings = useMemo(
     () => parseWorkspaceSettings(initialSettings),
     [initialSettings]
   );
+  const parsedInitialControls = useMemo(
+    () =>
+      parseWorkspaceControlSettings(
+        initialControls,
+        initialSettings?.workspaceId ?? DEFAULT_WORKSPACE_SETTINGS.workspaceId
+      ),
+    [initialControls, initialSettings?.workspaceId]
+  );
   const [settings, setSettings] = useState<WorkspaceSettings>(parsedInitialSettings);
+  const [controls, setControls] = useState<WorkspaceControlSettings>(parsedInitialControls);
 
   useEffect(() => {
     setSettings(parsedInitialSettings);
   }, [parsedInitialSettings]);
+
+  useEffect(() => {
+    setControls(parsedInitialControls);
+  }, [parsedInitialControls]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -55,6 +77,7 @@ export function WorkspaceProvider({
   const value = useMemo<WorkspaceContextType>(
     () => ({
       settings,
+      controls,
       updateSettings: (updates) => {
         setSettings((current) => parseWorkspaceSettings({ ...current, ...updates }));
       },
@@ -64,8 +87,36 @@ export function WorkspaceProvider({
       resetSettings: () => {
         setSettings(parsedInitialSettings);
       },
+      updateControls: (updates) => {
+        setControls((current) =>
+          parseWorkspaceControlSettings(
+            {
+              ...current,
+              ...updates,
+              modules: {
+                ...current.modules,
+                ...(updates.modules ?? {}),
+              },
+              billing: {
+                ...current.billing,
+                ...(updates.billing ?? {}),
+              },
+              workspaceId: current.workspaceId,
+            },
+            current.workspaceId
+          )
+        );
+      },
+      replaceControls: (nextControls) => {
+        setControls(
+          parseWorkspaceControlSettings(
+            nextControls,
+            nextControls.workspaceId || settings.workspaceId
+          )
+        );
+      },
     }),
-    [parsedInitialSettings, settings]
+    [controls, parsedInitialSettings, settings]
   );
 
   return (

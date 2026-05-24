@@ -4,8 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { isWorkspaceModuleAccessible } from "@/lib/workspace-controls";
 import { useSidebar } from "../context/SidebarContext";
-import { BoltIcon, DocsIcon, HorizontaLDots, TaskIcon } from "../icons";
+import {
+  BoltIcon,
+  BoxCubeIcon,
+  DollarLineIcon,
+  DocsIcon,
+  HorizontaLDots,
+  ListIcon,
+  MailIcon,
+  PieChartIcon,
+  TaskIcon,
+} from "../icons";
 
 export default function AppSidebar({
   session,
@@ -14,7 +25,7 @@ export default function AppSidebar({
     role: "admin" | "member";
   } | null;
 }) {
-  const { settings } = useWorkspace();
+  const { controls, settings } = useWorkspace();
   const pathname = usePathname();
   const {
     isExpanded,
@@ -27,27 +38,55 @@ export default function AppSidebar({
       name: "Screen CV",
       path: "/upload",
       icon: <DocsIcon />,
+      visible: isWorkspaceModuleAccessible(controls, "screen_cv"),
     },
     {
       name: "Results",
       path: "/results",
       icon: <TaskIcon />,
+      visible: isWorkspaceModuleAccessible(controls, "results"),
+    },
+    {
+      name: "Analytics",
+      path: "/analytics",
+      icon: <PieChartIcon />,
+      visible: isWorkspaceModuleAccessible(controls, "analytics"),
+    },
+    {
+      name: "Audit Log",
+      path: "/audit",
+      icon: <ListIcon />,
+      visible: isWorkspaceModuleAccessible(controls, "audit_log"),
     },
     {
       name: "Hiring Pipeline",
       path: "/pipeline",
       icon: <BoltIcon />,
+      visible: isWorkspaceModuleAccessible(controls, "pipeline"),
+    },
+    {
+      name: "Candidate Mail",
+      path: "/candidate-mail",
+      icon: <MailIcon />,
+      visible: isWorkspaceModuleAccessible(controls, "candidate_mail"),
     },
     ...(session?.role === "admin"
       ? [
           {
             name: "Workspace Settings",
             path: "/workspace",
-            icon: <TaskIcon />,
+            icon: <BoxCubeIcon />,
+            visible: isWorkspaceModuleAccessible(controls, "workspace_settings"),
+          },
+          {
+            name: "Billing",
+            path: "/billing",
+            icon: <DollarLineIcon />,
+            visible: true,
           },
         ]
       : []),
-  ];
+  ].filter((item) => item.visible);
   const showFull = isExpanded || isMobileOpen;
 
   return (

@@ -10,6 +10,7 @@ import {
   deleteLocalHiringApplication,
   deleteLocalHiringForm,
   getLocalHiringApplicationDownload,
+  getLocalHiringApplicationRecord,
   getLocalHiringFormDetail,
   getLocalHiringFormRecord,
   getLocalPublicHiringForm,
@@ -17,11 +18,16 @@ import {
   readLocalHiringFunnelStoreForMigration,
   readLocalUploadedBinaryByStoragePath,
   saveLocalUploadedBinary,
+  updateLocalHiringApplicationWorkflow,
   updateLocalHiringForm,
 } from "@/lib/local-hiring-funnel-store";
 import {
   normalizeHiringFormScreeningPolicy,
 } from "@/lib/hiring-screening-policy";
+import {
+  buildInitialHiringApplicationWorkflow,
+  normalizeHiringApplicationWorkflow,
+} from "@/lib/hiring-application-workflow";
 import {
   isPostgresConfigured,
   queryPostgres,
@@ -220,6 +226,29 @@ export async function getHiringFormRecord(
   );
 
   return result.rows[0] ? toFormRecordFromRow(result.rows[0]) : null;
+}
+
+export async function getHiringApplicationRecord(
+  applicationId: string,
+  workspaceId: string
+): Promise<HiringApplicationRecord | null> {
+  if (!isPostgresConfigured()) {
+    return getLocalHiringApplicationRecord(applicationId, workspaceId);
+  }
+
+  await ensureHiringFunnelSeeded();
+
+  const result = await queryPostgres<DbApplicationRow>(
+    `
+      SELECT *
+      FROM hiring_applications
+      WHERE id = $1 AND workspace_id = $2
+      LIMIT 1
+    `,
+    [applicationId, sanitizeWorkspaceId(workspaceId)]
+  );
+
+  return result.rows[0] ? toApplicationRecordFromRow(result.rows[0]) : null;
 }
 
 export async function createHiringForm({
@@ -482,10 +511,12 @@ export async function createHiringApplication({
 
   return withPostgresTransaction(async (client) => {
     const formResult = await client.query<{
+      role_setup: unknown;
+      screening_policy: unknown;
       workspace_id: string;
     }>(
       `
-        SELECT workspace_id
+        SELECT workspace_id, screening_policy, role_setup
         FROM hiring_forms
         WHERE id = $1
         LIMIT 1
@@ -507,6 +538,11 @@ export async function createHiringApplication({
       applicant,
       resumeFile,
       analysis,
+      workflow: buildInitialHiringApplicationWorkflow({
+        analysis,
+        roleSetup: normalizeRoleSetup(form.role_setup),
+        screeningPolicy: normalizeHiringFormScreeningPolicy(form.screening_policy),
+      }),
     };
 
     await client.query(
@@ -519,12 +555,13 @@ export async function createHiringApplication({
           created_at,
           applicant,
           analysis,
-          resume_file
+          resume_file,
+          workflow
         )
         VALUES (
           $1, $2, $3, $4,
           $5::timestamptz,
-          $6::jsonb, $7::jsonb, $8::jsonb
+          $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb
         )
       `,
       [
@@ -536,11 +573,48 @@ export async function createHiringApplication({
         JSON.stringify(application.applicant),
         JSON.stringify(application.analysis),
         JSON.stringify(application.resumeFile),
+        JSON.stringify(application.workflow),
       ]
     );
 
     return application;
   });
+}
+
+export async function updateHiringApplicationWorkflow({
+  applicationId,
+  workspaceId,
+  workflow,
+}: {
+  applicationId: string;
+  workspaceId: string;
+  workflow: HiringApplicationRecord["workflow"];
+}) {
+  if (!isPostgresConfigured()) {
+    return updateLocalHiringApplicationWorkflow({
+      applicationId,
+      workspaceId,
+      workflow,
+    });
+  }
+
+  await ensureHiringFunnelSeeded();
+
+  const result = await queryPostgres<DbApplicationRow>(
+    `
+      UPDATE hiring_applications
+      SET workflow = $3::jsonb
+      WHERE id = $1 AND workspace_id = $2
+      RETURNING *
+    `,
+    [
+      applicationId,
+      sanitizeWorkspaceId(workspaceId),
+      JSON.stringify(normalizeHiringApplicationWorkflow(workflow)),
+    ]
+  );
+
+  return result.rows[0] ? toApplicationRecordFromRow(result.rows[0]) : null;
 }
 
 export async function deleteHiringApplication(
@@ -576,6 +650,13 @@ export async function deleteHiringApplication(
       `
         DELETE FROM hiring_applications
         WHERE id = $1 AND workspace_id = $2
+      `,
+      [applicationId, scopedWorkspaceId]
+    );
+    await client.query(
+      `
+        DELETE FROM candidate_email_drafts
+        WHERE application_id = $1 AND workspace_id = $2
       `,
       [applicationId, scopedWorkspaceId]
     );
@@ -688,6 +769,14 @@ export async function deleteHiringForm(formId: string, workspaceId: string) {
         [uploadIds]
       );
     }
+
+    await client.query(
+      `
+        DELETE FROM candidate_email_drafts
+        WHERE form_id = $1 AND workspace_id = $2
+      `,
+      [formId, scopedWorkspaceId]
+    );
 
     await client.query(
       `
@@ -821,35 +910,37 @@ async function ensureHiringFunnelSeeded() {
 
       await client.query(
         `
-          INSERT INTO hiring_applications (
-            id,
-            workspace_id,
-            form_id,
-            upload_id,
-            created_at,
-            applicant,
-            analysis,
-            resume_file
-          )
-          VALUES (
-            $1, $2, $3, $4,
-            $5::timestamptz,
-            $6::jsonb, $7::jsonb, $8::jsonb
-          )
-          ON CONFLICT (id) DO NOTHING
-        `,
-        [
-          application.id,
-          sanitizeWorkspaceId(application.workspaceId),
-          application.formId,
-          uploadId,
-          application.createdAt,
-          JSON.stringify(application.applicant),
-          JSON.stringify(application.analysis),
-          JSON.stringify(resumeFile),
-        ]
-      );
-    }
+        INSERT INTO hiring_applications (
+          id,
+          workspace_id,
+          form_id,
+          upload_id,
+          created_at,
+          applicant,
+          analysis,
+          resume_file,
+          workflow
+        )
+        VALUES (
+          $1, $2, $3, $4,
+          $5::timestamptz,
+          $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb
+        )
+        ON CONFLICT (id) DO NOTHING
+      `,
+      [
+        application.id,
+        sanitizeWorkspaceId(application.workspaceId),
+        application.formId,
+        uploadId,
+        application.createdAt,
+        JSON.stringify(application.applicant),
+        JSON.stringify(application.analysis),
+        JSON.stringify(resumeFile),
+        JSON.stringify(application.workflow),
+      ]
+    );
+  }
   });
 
   return hiringFunnelSeedPromise;
@@ -985,6 +1076,7 @@ function toApplicationRecordFromRow(row: DbApplicationRow): HiringApplicationRec
     applicant: normalizeApplicantProfile(row.applicant),
     resumeFile: normalizeStoredResumeFile(row.resume_file),
     analysis: normalizeAnalysisResponse(row.analysis),
+    workflow: normalizeHiringApplicationWorkflow(row.workflow),
   };
 }
 
@@ -1323,6 +1415,7 @@ type DbApplicationRow = QueryResultRow & {
   form_id: string;
   id: string;
   resume_file: unknown;
+  workflow: unknown;
   workspace_id: string;
 };
 

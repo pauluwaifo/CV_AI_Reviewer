@@ -7,6 +7,7 @@ import { useState } from "react";
 import { ThemeToggleButton } from "@/components/common/ThemeToggleButton";
 import { useSidebar } from "@/context/SidebarContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { buildDefaultWorkspaceControlSettings } from "@/lib/workspace-controls";
 import { DEFAULT_WORKSPACE_SETTINGS } from "@/lib/workspace-settings";
 
 type AppHeaderProps = {
@@ -24,7 +25,7 @@ type AppHeaderProps = {
 export default function AppHeader({ session }: AppHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { settings, replaceSettings } = useWorkspace();
+  const { settings, replaceControls, replaceSettings } = useWorkspace();
   const { toggleMobileSidebar, toggleSidebar, isExpanded } = useSidebar();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const isAuthenticated = Boolean(session);
@@ -41,6 +42,9 @@ export default function AppHeader({ session }: AppHeaderProps) {
       await fetch("/api/auth/signout", { method: "POST" });
     } finally {
       replaceSettings(DEFAULT_WORKSPACE_SETTINGS);
+      replaceControls(
+        buildDefaultWorkspaceControlSettings(DEFAULT_WORKSPACE_SETTINGS.workspaceId)
+      );
       router.push("/");
       router.refresh();
       setIsSigningOut(false);
@@ -129,8 +133,16 @@ function getPageTitle(pathname: string) {
     return "Hiring pipeline";
   }
 
+  if (pathname.startsWith("/candidate-mail")) {
+    return "Candidate mail";
+  }
+
   if (pathname.startsWith("/workspace")) {
     return "Workspace settings";
+  }
+
+  if (pathname.startsWith("/billing")) {
+    return "Workspace billing";
   }
 
   return "Workspace dashboard";

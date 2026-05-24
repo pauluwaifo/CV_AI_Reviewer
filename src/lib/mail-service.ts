@@ -214,6 +214,83 @@ export function buildWorkspaceSignInCodeEmail({
   });
 }
 
+export function buildCandidateEmailApprovalRequestEmail({
+  organizationName,
+  candidateName,
+  candidateEmail,
+  kind,
+  subject,
+  body,
+  approvalUrl,
+  reviewUrl,
+  requestedByEmail,
+}: {
+  organizationName: string;
+  candidateName: string;
+  candidateEmail: string;
+  kind: "rejection" | "follow_up";
+  subject: string;
+  body: string;
+  approvalUrl: string;
+  reviewUrl: string;
+  requestedByEmail: string;
+}) {
+  const normalizedKind = kind === "follow_up" ? "follow-up" : "rejection";
+  const preview = summarizeEmailBody(body);
+  const subjectLine = `Approval needed: ${normalizedKind} email for ${candidateName || candidateEmail}`;
+  const text = [
+    `A ${normalizedKind} email draft is waiting for admin approval.`,
+    "",
+    `Candidate: ${candidateName || "Unknown candidate"} <${candidateEmail}>`,
+    `Requested by: ${requestedByEmail || "A workspace teammate"}`,
+    `Workspace: ${organizationName}`,
+    "",
+    `Draft subject: ${subject}`,
+    "",
+    preview,
+    "",
+    `Approve and send: ${approvalUrl}`,
+    `Review in workspace: ${reviewUrl}`,
+  ].join("\n");
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+      <h2 style="margin:0 0 12px">Approval needed for a candidate email</h2>
+      <p>A <strong>${escapeHtml(normalizedKind)}</strong> draft is waiting for admin approval.</p>
+      <div style="border:1px solid #d1d5db;border-radius:14px;padding:16px;margin:16px 0;background:#f9fafb">
+        <p><strong>Candidate:</strong> ${escapeHtml(candidateName || "Unknown candidate")} &lt;${escapeHtml(candidateEmail)}&gt;</p>
+        <p><strong>Requested by:</strong> ${escapeHtml(requestedByEmail || "A workspace teammate")}</p>
+        <p><strong>Draft subject:</strong> ${escapeHtml(subject)}</p>
+      </div>
+      <p style="margin:0 0 14px">${escapeHtml(preview)}</p>
+      <p style="display:flex;gap:12px;flex-wrap:wrap">
+        <a href="${escapeHtml(approvalUrl)}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px">Approve and send</a>
+        <a href="${escapeHtml(reviewUrl)}" style="display:inline-block;border:1px solid #d1d5db;color:#111827;text-decoration:none;padding:12px 18px;border-radius:10px">Review in workspace</a>
+      </p>
+    </div>
+  `;
+
+  return {
+    subject: subjectLine,
+    text,
+    html,
+  };
+}
+
+export function buildTextEmailHtml(body: string) {
+  const paragraphs = body
+    .replace(/\r/g, "")
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => `<p style="margin:0 0 16px">${escapeHtml(item).replace(/\n/g, "<br />")}</p>`);
+
+  return `
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+      ${paragraphs.join("\n")}
+    </div>
+  `;
+}
+
 function getBase64Url(value: string) {
   return Buffer.from(value)
     .toString("base64")
@@ -361,6 +438,16 @@ function encodeGmailMessage({
 
 function encodeHeader(value: string) {
   return `=?UTF-8?B?${Buffer.from(value).toString("base64")}?=`;
+}
+
+function summarizeEmailBody(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return "No draft preview was included.";
+  }
+
+  return normalized.length > 220 ? `${normalized.slice(0, 217)}...` : normalized;
 }
 
 function escapeHtml(value: string) {

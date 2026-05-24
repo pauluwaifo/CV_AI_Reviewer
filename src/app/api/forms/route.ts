@@ -2,20 +2,19 @@ import { NextResponse } from "next/server";
 
 import { DocumentAnalysisError, extractUploadTextFromFile } from "@/lib/document-intelligence";
 import {
-  createWorkspaceUnauthorizedResponse,
-  requireWorkspaceApiSession,
-} from "@/lib/workspace-auth";
-import {
   normalizeHiringFormScreeningPolicy,
 } from "@/lib/hiring-screening-policy";
 import {
   createHiringForm,
   listHiringForms,
 } from "@/lib/hiring-funnel-store";
+import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
+import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 import {
   getWorkspacePublicSnapshot,
 } from "@/lib/workspace-settings";
+import { requireWorkspaceFeatureApiAccess } from "@/lib/workspace-module-access";
 import type { HiringFormQuestion } from "@/types/hiring-funnel";
 import type { HiringFormField, HiringFormFieldType } from "@/types/hiring-funnel";
 import type { RoleSetup } from "@/types/document-intelligence";
@@ -24,22 +23,22 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const session = await requireWorkspaceApiSession(request);
+  const access = await requireWorkspaceFeatureApiAccess(request, "pipeline");
 
-  if (!session) {
-    return createWorkspaceUnauthorizedResponse();
+  if (access.errorResponse) {
+    return access.errorResponse;
   }
 
   const baseUrl = new URL(request.url).origin;
-  const forms = await listHiringForms(baseUrl, session.workspaceId);
+  const forms = await listHiringForms(baseUrl, access.session.workspaceId);
   return NextResponse.json({ forms });
 }
 
 export async function POST(request: Request) {
-  const session = await requireWorkspaceApiSession(request);
+  const access = await requireWorkspaceFeatureApiAccess(request, "pipeline");
 
-  if (!session) {
-    return createWorkspaceUnauthorizedResponse();
+  if (access.errorResponse) {
+    return access.errorResponse;
   }
 
   try {
@@ -56,7 +55,7 @@ export async function POST(request: Request) {
     const jdText = String(formData.get("jobDescriptionText") || "").trim();
     const jdTextFileName = String(formData.get("jobDescriptionFileName") || "").trim();
     const workspace = getWorkspacePublicSnapshot(
-      await getWorkspaceSettings(session.workspaceId)
+      await getWorkspaceSettings(access.session.workspaceId)
     );
 
     if (!title) {
@@ -70,7 +69,7 @@ export async function POST(request: Request) {
         : null;
 
     const created = await createHiringForm({
-      workspaceId: session.workspaceId,
+      workspaceId: access.session.workspaceId,
       workspace,
       title,
       team,
@@ -83,6 +82,24 @@ export async function POST(request: Request) {
       expiresAt,
       jdAttachment,
     });
+    await createWorkspaceAuditEvent({
+      action: "form.created",
+      actorEmail: access.session.email,
+      actorRole: access.session.role,
+      metadata: {
+        published: created.published,
+        title: created.title,
+      },
+      summary: `Created hiring form "${created.title}".`,
+      targetId: created.id,
+      targetType: "form",
+      workspaceId: access.session.workspaceId,
+    }).catch(() => undefined);
+    await emitWorkspaceIntegrationEvent(access.session.workspaceId, "form.created", {
+      formId: created.id,
+      published: created.published,
+      title: created.title,
+    }).catch(() => undefined);
 
     return NextResponse.json({
       form: created,

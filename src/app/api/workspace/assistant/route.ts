@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { generateWorkspaceAssistantReply } from "@/lib/document-intelligence";
-import {
-  createWorkspaceUnauthorizedResponse,
-  requireWorkspaceApiSession,
-} from "@/lib/workspace-auth";
+import { requireWorkspaceFeatureApiAccess } from "@/lib/workspace-module-access";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 import type { WorkspaceAssistantMessage } from "@/lib/workspace-assistant";
 
@@ -12,10 +9,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const session = await requireWorkspaceApiSession(request);
+  const access = await requireWorkspaceFeatureApiAccess(request, "assistant");
 
-  if (!session) {
-    return createWorkspaceUnauthorizedResponse();
+  if (access.errorResponse) {
+    return access.errorResponse;
   }
 
   try {
@@ -25,7 +22,7 @@ export async function POST(request: Request) {
           pathname?: string;
         }
       | null;
-    const settings = await getWorkspaceSettings(session.workspaceId);
+    const settings = await getWorkspaceSettings(access.session.workspaceId);
     const messages = normalizeMessages(payload?.messages);
     const pathname = normalizeAssistantPathname(payload?.pathname);
 
@@ -40,7 +37,7 @@ export async function POST(request: Request) {
       context: {
         appName: settings.appName,
         organizationName: settings.organizationName,
-        role: session.role,
+        role: access.session.role,
         pathname,
       },
       messages,

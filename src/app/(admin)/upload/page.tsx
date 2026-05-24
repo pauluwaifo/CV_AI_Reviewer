@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 
 import UploadDocumentPage from "@/components/analyzer/UploadDocumentPage";
-import { requireWorkspacePageSession } from "@/lib/workspace-auth";
+import WorkspaceModuleBlockedPage from "@/components/workspace/WorkspaceModuleBlockedPage";
+import { requireWorkspaceFeaturePageAccess } from "@/lib/workspace-module-access";
 
 export const metadata: Metadata = {
   title: "Upload Candidate CV",
@@ -9,6 +10,16 @@ export const metadata: Metadata = {
 };
 
 export default async function UploadPage() {
-  await requireWorkspacePageSession("/upload");
+  const access = await requireWorkspaceFeaturePageAccess("/upload", "screen_cv");
+
+  if (!access.isAccessible) {
+    return (
+      <WorkspaceModuleBlockedPage
+        title="Screen CV is currently locked"
+        description={access.lockedMessage}
+      />
+    );
+  }
+
   return <UploadDocumentPage />;
 }

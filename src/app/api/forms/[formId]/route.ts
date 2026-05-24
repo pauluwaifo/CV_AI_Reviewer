@@ -13,6 +13,8 @@ import {
   setHiringFormPublished,
   updateHiringForm,
 } from "@/lib/hiring-funnel-store";
+import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
+import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
 import type { RoleSetup } from "@/types/document-intelligence";
 import type { HiringFormField, HiringFormFieldType, HiringFormQuestion } from "@/types/hiring-funnel";
 
@@ -99,6 +101,24 @@ export async function PATCH(
         return NextResponse.json({ error: "Form not found." }, { status: 404 });
       }
 
+      await createWorkspaceAuditEvent({
+        action: "form.updated",
+        actorEmail: session.email,
+        actorRole: session.role,
+        metadata: {
+          published,
+        },
+        summary: `${published ? "Published" : "Unpublished"} hiring form "${form.title}".`,
+        targetId: form.id,
+        targetType: "form",
+        workspaceId: session.workspaceId,
+      }).catch(() => undefined);
+      await emitWorkspaceIntegrationEvent(session.workspaceId, "form.updated", {
+        formId: form.id,
+        published,
+        title: form.title,
+      }).catch(() => undefined);
+
       return NextResponse.json({ form });
     }
 
@@ -135,6 +155,25 @@ export async function PATCH(
     if (!form) {
       return NextResponse.json({ error: "Form not found." }, { status: 404 });
     }
+
+    await createWorkspaceAuditEvent({
+      action: "form.updated",
+      actorEmail: session.email,
+      actorRole: session.role,
+      metadata: {
+        published: form.published,
+        title: form.title,
+      },
+      summary: `Updated hiring form "${form.title}".`,
+      targetId: form.id,
+      targetType: "form",
+      workspaceId: session.workspaceId,
+    }).catch(() => undefined);
+    await emitWorkspaceIntegrationEvent(session.workspaceId, "form.updated", {
+      formId: form.id,
+      published: form.published,
+      title: form.title,
+    }).catch(() => undefined);
 
     return NextResponse.json({ form });
   } catch (error) {
@@ -178,6 +217,20 @@ export async function DELETE(
     return NextResponse.json({ error: "Form not found." }, { status: 404 });
   }
 
+  await createWorkspaceAuditEvent({
+    action: "form.deleted",
+    actorEmail: session.email,
+    actorRole: session.role,
+    metadata: {},
+    summary: `Deleted hiring form ${formId}.`,
+    targetId: formId,
+    targetType: "form",
+    workspaceId: session.workspaceId,
+  }).catch(() => undefined);
+  await emitWorkspaceIntegrationEvent(session.workspaceId, "form.deleted", {
+    formId,
+  }).catch(() => undefined);
+
   return NextResponse.json({ ok: true });
 }
 
@@ -196,6 +249,13 @@ function buildFormResponsesCsv(form: NonNullable<Awaited<ReturnType<typeof getHi
     "salary_expectation",
     "cover_note",
     "decision",
+    "workflow_stage",
+    "workflow_owner",
+    "workflow_next_step",
+    "workflow_tags",
+    "interview_date",
+    "interview_scorecard_recommendation",
+    "interview_scorecard_completed_at",
     "confidence",
     "score",
     "summary",
@@ -223,6 +283,13 @@ function buildFormResponsesCsv(form: NonNullable<Awaited<ReturnType<typeof getHi
       application.applicant.salaryExpectation,
       application.applicant.coverNote,
       application.analysis.result.recommendation.decision,
+      application.workflow.stage,
+      application.workflow.ownerEmail,
+      application.workflow.nextStep,
+      application.workflow.tags.join(" | "),
+      application.workflow.interviewDate || "",
+      application.workflow.interviewScorecard.recommendation,
+      application.workflow.interviewScorecard.completedAt || "",
       application.analysis.result.recommendation.confidence,
       String(application.analysis.result.score.value),
       application.analysis.result.summary,

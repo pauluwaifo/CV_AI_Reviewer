@@ -8,7 +8,7 @@ declare global {
   var __hrBoardPostgresSchemaKey: string | undefined;
 }
 
-const POSTGRES_SCHEMA_KEY = "2026-05-22-auth-challenges-v1";
+const POSTGRES_SCHEMA_KEY = "2026-05-24-analytics-workflow-audit-v1";
 
 export function isPostgresConfigured() {
   return Boolean(process.env.DATABASE_URL?.trim());
@@ -232,6 +232,38 @@ async function createSchema() {
     )
     `,
     `
+    CREATE TABLE IF NOT EXISTS workspace_control_settings (
+      workspace_id TEXT PRIMARY KEY,
+      controls JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS workspace_integration_settings (
+      workspace_id TEXT PRIMARY KEY,
+      settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS workspace_audit_events (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      actor_email TEXT NOT NULL DEFAULT '',
+      actor_role TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL DEFAULT '',
+      summary TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_workspace_audit_events_workspace_created_at
+      ON workspace_audit_events (workspace_id, created_at DESC)
+    `,
+    `
     CREATE TABLE IF NOT EXISTS auth_challenges (
       id TEXT PRIMARY KEY,
       purpose TEXT NOT NULL,
@@ -333,12 +365,82 @@ async function createSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       applicant JSONB NOT NULL DEFAULT '{}'::jsonb,
       analysis JSONB NOT NULL DEFAULT '{}'::jsonb,
-      resume_file JSONB NOT NULL DEFAULT '{}'::jsonb
+      resume_file JSONB NOT NULL DEFAULT '{}'::jsonb,
+      workflow JSONB NOT NULL DEFAULT '{}'::jsonb
     )
     `,
     `
     CREATE INDEX IF NOT EXISTS idx_hiring_applications_workspace_form_created_at
       ON hiring_applications (workspace_id, form_id, created_at DESC)
+    `,
+    `
+    ALTER TABLE hiring_applications
+      ADD COLUMN IF NOT EXISTS workflow JSONB NOT NULL DEFAULT '{}'::jsonb
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS candidate_email_drafts (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      application_id TEXT NOT NULL,
+      form_id TEXT NOT NULL,
+      candidate_name TEXT NOT NULL DEFAULT '',
+      candidate_email TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'rejection',
+      status TEXT NOT NULL DEFAULT 'draft',
+      subject TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL DEFAULT '',
+      prompt TEXT NOT NULL DEFAULT '',
+      provider TEXT NULL,
+      provider_detail TEXT NOT NULL DEFAULT '',
+      provider_warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+      requested_by_email TEXT NOT NULL DEFAULT '',
+      requested_by_role TEXT NOT NULL DEFAULT 'member',
+      approval_requested_at TIMESTAMPTZ NULL,
+      approval_requested_by_email TEXT NOT NULL DEFAULT '',
+      approval_token_hash TEXT NOT NULL DEFAULT '',
+      approval_token_expires_at TIMESTAMPTZ NULL,
+      approved_at TIMESTAMPTZ NULL,
+      approved_by_email TEXT NOT NULL DEFAULT '',
+      approved_via TEXT NULL,
+      sent_at TIMESTAMPTZ NULL,
+      delivery_source TEXT NULL,
+      delivery_provider TEXT NULL,
+      delivery_message_id TEXT NOT NULL DEFAULT '',
+      delivery_from_email TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_candidate_email_drafts_workspace_application_updated
+      ON candidate_email_drafts (workspace_id, application_id, updated_at DESC)
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_candidate_email_drafts_approval_token_hash
+      ON candidate_email_drafts (approval_token_hash)
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS workspace_billing_transactions (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      reference TEXT NOT NULL UNIQUE,
+      provider TEXT NOT NULL DEFAULT 'paystack',
+      status TEXT NOT NULL DEFAULT 'pending',
+      amount_kobo INTEGER NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'NGN',
+      payer_email TEXT NOT NULL DEFAULT '',
+      authorization_url TEXT NOT NULL DEFAULT '',
+      access_code TEXT NOT NULL DEFAULT '',
+      paid_at TIMESTAMPTZ NULL,
+      provider_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_workspace_billing_transactions_workspace_created_at
+      ON workspace_billing_transactions (workspace_id, created_at DESC)
     `,
   ];
 

@@ -25,6 +25,31 @@ export default function PublicApplicationFormPage({
 
   const workspace = form?.workspace ?? buildFallbackWorkspace();
   const contactEmail = workspace.contactEmail?.trim().toLowerCase() ?? "";
+  const profileFields = useMemo(
+    () =>
+      form?.formFields.filter(
+        (field) =>
+          field.systemKey &&
+          field.systemKey !== "resumeFile" &&
+          field.systemKey !== "coverNote"
+      ) ?? [],
+    [form?.formFields]
+  );
+  const applicationMaterialFields = useMemo(
+    () =>
+      form?.formFields.filter(
+        (field) => field.systemKey === "resumeFile" || field.systemKey === "coverNote"
+      ) ?? [],
+    [form?.formFields]
+  );
+  const roleQuestionFields = useMemo(
+    () => form?.formFields.filter((field) => !field.systemKey) ?? [],
+    [form?.formFields]
+  );
+  const requiredFieldCount = useMemo(
+    () => form?.formFields.filter((field) => field.required).length ?? 0,
+    [form?.formFields]
+  );
   const theme = useMemo(
     () => buildPublicFormTheme(workspace.formAccent),
     [workspace.formAccent]
@@ -288,48 +313,6 @@ export default function PublicApplicationFormPage({
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              {form.team ? <Tag label={form.team} theme={theme} /> : null}
-              {form.roleSetup.title ? <Tag label={form.roleSetup.title} theme={theme} /> : null}
-              {form.roleSetup.seniority ? (
-                <Tag label={form.roleSetup.seniority} theme={theme} />
-              ) : null}
-              {form.roleSetup.location ? (
-                <Tag label={form.roleSetup.location} theme={theme} />
-              ) : null}
-            </div>
-
-            <div
-              className="rounded px-4 py-4"
-              style={{ backgroundColor: theme.surface, border: `1px solid ${theme.borderSoft}` }}
-            >
-              <p className="font-medium" style={{ color: theme.title }}>
-                Before you submit
-              </p>
-              <p className="mt-2 text-sm leading-7" style={{ color: theme.body }}>
-                Questions marked with an asterisk are required. Your CV, answers, and contact
-                details will be stored in {workspace.organizationName}
-                {"'"}s hiring workspace so the team can review your application.
-              </p>
-              <p className="mt-2 text-sm leading-7" style={{ color: theme.body }}>
-                Your application is screened automatically for role fit before recruiter review.
-                Automated screening helps prioritize review and does not make the final hiring
-                decision on its own.
-              </p>
-              {contactEmail ? (
-                <p className="mt-2 text-sm leading-7" style={{ color: theme.body }}>
-                  Questions about this submission or your data:{" "}
-                  <a
-                    href={`mailto:${contactEmail}`}
-                    className="font-medium underline underline-offset-4"
-                    style={{ color: theme.accentHover }}
-                  >
-                    {contactEmail}
-                  </a>
-                  .
-                </p>
-              ) : null}
-            </div>
           </div>
         </section>
 
@@ -341,20 +324,98 @@ export default function PublicApplicationFormPage({
           </SectionCard>
         ) : null}
 
+        <section className="grid gap-4 sm:grid-cols-3">
+          <PrepCard
+            theme={theme}
+            label="Required fields"
+            value={String(requiredFieldCount)}
+            helper="Complete each required response before you submit."
+          />
+          <PrepCard
+            theme={theme}
+            label="Resume"
+            value={applicationMaterialFields.some((field) => field.systemKey === "resumeFile") ? "Needed" : "Optional"}
+            helper="Keep your latest CV ready before you begin."
+          />
+          <PrepCard
+            theme={theme}
+            label="Hiring team"
+            value={form.team || workspace.organizationName}
+            helper="Your submission goes straight into this workspace."
+          />
+        </section>
+
         {error ? <DangerPanel theme={theme}>{error}</DangerPanel> : null}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {form.formFields.map((field) => (
-            <QuestionCard
-              key={field.id}
-              label={field.label}
-              required={field.required}
-              helper={field.helper}
+          {profileFields.length > 0 ? (
+            <FormSection
               theme={theme}
+              eyebrow="Step 1"
+              title="Tell us about yourself"
+              description="Add your core contact and profile details so the team can identify and reach you."
             >
-              <PublicFormFieldInput field={field} theme={theme} />
-            </QuestionCard>
-          ))}
+              <div className="grid gap-4 sm:grid-cols-2">
+                {profileFields.map((field) => (
+                  <QuestionCard
+                    key={field.id}
+                    label={field.label}
+                    required={field.required}
+                    helper={field.helper}
+                    theme={theme}
+                  >
+                    <PublicFormFieldInput field={field} theme={theme} />
+                  </QuestionCard>
+                ))}
+              </div>
+            </FormSection>
+          ) : null}
+
+          {applicationMaterialFields.length > 0 ? (
+            <FormSection
+              theme={theme}
+              eyebrow="Step 2"
+              title="Add your materials"
+              description="Upload your CV and include any short context that helps the hiring team screen accurately."
+            >
+              <div className="grid gap-4">
+                {applicationMaterialFields.map((field) => (
+                  <QuestionCard
+                    key={field.id}
+                    label={field.label}
+                    required={field.required}
+                    helper={field.helper}
+                    theme={theme}
+                  >
+                    <PublicFormFieldInput field={field} theme={theme} />
+                  </QuestionCard>
+                ))}
+              </div>
+            </FormSection>
+          ) : null}
+
+          {roleQuestionFields.length > 0 ? (
+            <FormSection
+              theme={theme}
+              eyebrow="Step 3"
+              title="Answer role questions"
+              description="These answers help the team compare candidates quickly and consistently."
+            >
+              <div className="grid gap-4">
+                {roleQuestionFields.map((field) => (
+                  <QuestionCard
+                    key={field.id}
+                    label={field.label}
+                    required={field.required}
+                    helper={field.helper}
+                    theme={theme}
+                  >
+                    <PublicFormFieldInput field={field} theme={theme} />
+                  </QuestionCard>
+                ))}
+              </div>
+            </FormSection>
+          ) : null}
 
           <section
             className="rounded bg-white p-5 sm:p-6"
@@ -434,6 +495,66 @@ function SectionCard({
         {eyebrow}
       </p>
       <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
+function FormSection({
+  theme,
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  theme: ReturnType<typeof buildPublicFormTheme>;
+  eyebrow: string;
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="space-y-2 px-1">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: theme.accent }}>
+          {eyebrow}
+        </p>
+        <h2 className="text-xl font-semibold" style={{ color: theme.title }}>
+          {title}
+        </h2>
+        <p className="text-sm leading-6" style={{ color: theme.body }}>
+          {description}
+        </p>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function PrepCard({
+  theme,
+  label,
+  value,
+  helper,
+}: {
+  theme: ReturnType<typeof buildPublicFormTheme>;
+  label: string;
+  value: string;
+  helper: string;
+}) {
+  return (
+    <section
+      className="rounded bg-white p-5"
+      style={{ border: `1px solid ${theme.border}`, boxShadow: theme.shadowSm }}
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: theme.accent }}>
+        {label}
+      </p>
+      <p className="mt-3 text-lg font-semibold" style={{ color: theme.title }}>
+        {value}
+      </p>
+      <p className="mt-2 text-sm leading-6" style={{ color: theme.body }}>
+        {helper}
+      </p>
     </section>
   );
 }
@@ -599,23 +720,6 @@ function toHtmlInputType(type: HiringFormField["type"]) {
   }
 
   return "text";
-}
-
-function Tag({
-  label,
-  theme,
-}: {
-  label: string;
-  theme: ReturnType<typeof buildPublicFormTheme>;
-}) {
-  return (
-    <span
-      className="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium"
-      style={{ backgroundColor: theme.accentSoft, color: theme.accentHover }}
-    >
-      {label}
-    </span>
-  );
 }
 
 function AlertPanel({

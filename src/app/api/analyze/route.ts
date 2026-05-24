@@ -6,10 +6,7 @@ import {
   extractUploadTextFromFile,
 } from "@/lib/document-intelligence";
 import { createScreeningSession } from "@/lib/screening-session-store";
-import {
-  createWorkspaceUnauthorizedResponse,
-  requireWorkspaceApiSession,
-} from "@/lib/workspace-auth";
+import { requireWorkspaceFeatureApiAccess } from "@/lib/workspace-module-access";
 import {
   analysisProviders,
   documentTypes,
@@ -24,10 +21,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const session = await requireWorkspaceApiSession(request);
+  const access = await requireWorkspaceFeatureApiAccess(request, "screen_cv");
 
-  if (!session) {
-    return createWorkspaceUnauthorizedResponse();
+  if (access.errorResponse) {
+    return access.errorResponse;
   }
 
   try {
@@ -72,7 +69,7 @@ export async function POST(request: Request) {
     });
 
     const screening = await createScreeningSession({
-      workspaceId: session.workspaceId,
+      workspaceId: access.session.workspaceId,
       analysisGoal: mergedAnalysisGoal,
       documentType,
       provider,

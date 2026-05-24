@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 
+import WorkspaceModuleBlockedPage from "@/components/workspace/WorkspaceModuleBlockedPage";
 import WorkspaceSettingsPage from "@/components/workspace/WorkspaceSettingsPage";
-import { requireWorkspacePageSession } from "@/lib/workspace-auth";
+import { requireWorkspaceFeaturePageAccess } from "@/lib/workspace-module-access";
 
 export const metadata: Metadata = {
   title: "Workspace",
@@ -10,6 +11,18 @@ export const metadata: Metadata = {
 };
 
 export default async function WorkspacePage() {
-  await requireWorkspacePageSession("/workspace", { role: "admin" });
+  const access = await requireWorkspaceFeaturePageAccess("/workspace", "workspace_settings", {
+    role: "admin",
+  });
+
+  if (!access.isAccessible) {
+    return (
+      <WorkspaceModuleBlockedPage
+        title="Workspace Settings is currently locked"
+        description={access.lockedMessage}
+      />
+    );
+  }
+
   return <WorkspaceSettingsPage />;
 }

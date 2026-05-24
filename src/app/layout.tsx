@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { WorkspaceProvider } from "@/context/WorkspaceContext";
 import { getWorkspaceSession } from "@/lib/workspace-auth";
+import { getWorkspaceControlSettings } from "@/lib/workspace-control-store";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 
 import "./globals.css";
@@ -24,15 +25,21 @@ export default async function RootLayout({
   children: ReactNode;
 }>) {
   const session = await getWorkspaceSession();
-  const initialSettings = session
-    ? await getWorkspaceSettings(session.workspaceId)
-    : undefined;
+  const [initialSettings, initialControls] = session
+    ? await Promise.all([
+        getWorkspaceSettings(session.workspaceId),
+        getWorkspaceControlSettings(session.workspaceId),
+      ])
+    : [undefined, undefined];
 
   return (
     <html lang="en">
       <body className="dark:bg-gray-900">
         <ThemeProvider>
-          <WorkspaceProvider initialSettings={initialSettings}>
+          <WorkspaceProvider
+            initialSettings={initialSettings}
+            initialControls={initialControls}
+          >
             {children}
           </WorkspaceProvider>
         </ThemeProvider>
