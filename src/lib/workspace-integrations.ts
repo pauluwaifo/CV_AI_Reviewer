@@ -166,6 +166,7 @@ function buildSlackPayload({
   const title = humanizeIntegrationEvent(event);
   const summary = buildSlackEventSummary(event, payload);
   const facts = buildSlackFacts(payload).slice(0, 5);
+  const links = buildSlackLinks(payload);
 
   return {
     text: `[${workspaceId}] ${title}: ${summary}`,
@@ -192,6 +193,22 @@ function buildSlackPayload({
               fields: facts.map((fact) => ({
                 type: "mrkdwn",
                 text: `*${fact.label}*\n${fact.value}`,
+              })),
+            },
+          ]
+        : []),
+      ...(links.length > 0
+        ? [
+            {
+              type: "actions",
+              elements: links.map((link) => ({
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: link.label,
+                  emoji: true,
+                },
+                url: link.url,
               })),
             },
           ]
@@ -240,6 +257,16 @@ function buildSlackFacts(payload: Record<string, unknown>) {
   return facts;
 }
 
+function buildSlackLinks(payload: Record<string, unknown>) {
+  return [
+    { label: "Open candidate", url: toSlackUrl(payload.pipelineUrl) },
+    { label: "Open candidate mail", url: toSlackUrl(payload.candidateMailUrl) },
+    { label: "Open billing", url: toSlackUrl(payload.billingUrl) },
+    { label: "Open workspace", url: toSlackUrl(payload.workspaceUrl) },
+    { label: "Public form", url: toSlackUrl(payload.publicFormUrl) },
+  ].filter((item): item is { label: string; url: string } => Boolean(item.url));
+}
+
 function pushFact(
   facts: Array<{ label: string; value: string }>,
   label: string,
@@ -264,6 +291,15 @@ function toSlackText(value: unknown) {
   }
 
   return "";
+}
+
+function toSlackUrl(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const normalized = value.trim();
+  return /^https?:\/\//i.test(normalized) ? normalized : "";
 }
 
 function humanizeIntegrationEvent(event: WorkspaceIntegrationEvent) {

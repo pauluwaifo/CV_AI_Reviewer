@@ -274,7 +274,10 @@ function normalizeRecord(value: unknown): CandidateEmailDraftRecord | null {
       parsed.deliverySource === "none"
         ? parsed.deliverySource
         : null,
-    deliveryProvider: parsed.deliveryProvider === "gmail" ? "gmail" : null,
+    deliveryProvider:
+      parsed.deliveryProvider === "gmail" || parsed.deliveryProvider === "smtp"
+        ? parsed.deliveryProvider
+        : null,
     deliveryMessageId:
       typeof parsed.deliveryMessageId === "string" ? parsed.deliveryMessageId.trim() : "",
     deliveryFromEmail:

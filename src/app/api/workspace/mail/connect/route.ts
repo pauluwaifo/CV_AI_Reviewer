@@ -13,7 +13,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const WORKSPACE_MAIL_OAUTH_COOKIE = "workspace-mail-oauth";
-const gmailScope = "https://www.googleapis.com/auth/gmail.send";
+const googleWorkspaceMailScopes = [
+  "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.settings.basic",
+];
 
 export async function POST(request: Request) {
   const session = await requireWorkspaceApiSession(request);
@@ -60,7 +63,7 @@ export async function POST(request: Request) {
     authUrl.searchParams.set("client_id", clientId);
     authUrl.searchParams.set("redirect_uri", redirectUri);
     authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", gmailScope);
+    authUrl.searchParams.set("scope", googleWorkspaceMailScopes.join(" "));
     authUrl.searchParams.set("access_type", "offline");
     authUrl.searchParams.set("prompt", "consent");
     authUrl.searchParams.set("login_hint", fromEmail);

@@ -14,11 +14,14 @@ import type { WorkspaceSessionRole } from "@/types/workspace-session";
 type LoadState = "idle" | "loading" | "ready";
 
 type CandidateMailConnectionSummary = {
-  provider: "gmail";
+  provider: "gmail" | "smtp" | "none";
   source: "workspace" | "global" | "none";
   fromEmail: string;
   hasWorkspaceConnection: boolean;
   updatedAt: string | null;
+  connectedAccountEmail: string;
+  relayHost: string;
+  senderIdentity: "primary" | "alias" | "smtp" | "unknown" | "none";
 };
 
 type CandidateEmailNoteTone = "success" | "warning" | "error" | "info";

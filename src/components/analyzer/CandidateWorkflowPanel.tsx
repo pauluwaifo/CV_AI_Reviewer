@@ -24,6 +24,9 @@ export default function CandidateWorkflowPanel({
   const [stage, setStage] = useState(application.workflow.stage);
   const [ownerEmail, setOwnerEmail] = useState(application.workflow.ownerEmail);
   const [nextStep, setNextStep] = useState(application.workflow.nextStep);
+  const [followUpAt, setFollowUpAt] = useState(
+    toDateTimeLocalValue(application.workflow.followUpAt)
+  );
   const [lastContactedAt, setLastContactedAt] = useState(
     toDateTimeLocalValue(application.workflow.lastContactedAt)
   );
@@ -40,6 +43,7 @@ export default function CandidateWorkflowPanel({
     setStage(application.workflow.stage);
     setOwnerEmail(application.workflow.ownerEmail);
     setNextStep(application.workflow.nextStep);
+    setFollowUpAt(toDateTimeLocalValue(application.workflow.followUpAt));
     setLastContactedAt(toDateTimeLocalValue(application.workflow.lastContactedAt));
     setInterviewDate(toDateTimeLocalValue(application.workflow.interviewDate));
     setInterviewPlan(application.workflow.interviewPlan);
@@ -65,6 +69,7 @@ export default function CandidateWorkflowPanel({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            followUpAt: fromDateTimeLocalValue(followUpAt),
             interviewDate: fromDateTimeLocalValue(interviewDate),
             interviewPlan,
             lastContactedAt: fromDateTimeLocalValue(lastContactedAt),
@@ -185,6 +190,14 @@ export default function CandidateWorkflowPanel({
             type="datetime-local"
           />
         </Field>
+        <Field label="Follow-up reminder">
+          <input
+            value={followUpAt}
+            onChange={(event) => setFollowUpAt(event.target.value)}
+            className={inputClassName}
+            type="datetime-local"
+          />
+        </Field>
         <Field label="Interview date">
           <input
             value={interviewDate}
@@ -224,11 +237,27 @@ export default function CandidateWorkflowPanel({
         </button>
         <button
           type="button"
+          onClick={() => setFollowUpAt(toDateTimeLocalValue(addDaysToNow(1)))}
+          className="inline-flex items-center justify-center rounded-full border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-3 py-2 text-xs font-medium text-[var(--workspace-form-title)] transition hover:border-[var(--workspace-form-border)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-white"
+        >
+          Remind tomorrow
+        </button>
+        <button
+          type="button"
           onClick={() => setNextStep(getDefaultHiringApplicationNextStep(stage))}
           className="inline-flex items-center justify-center rounded-full border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-3 py-2 text-xs font-medium text-[var(--workspace-form-title)] transition hover:border-[var(--workspace-form-border)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-white"
         >
           Use stage next step
         </button>
+        {followUpAt ? (
+          <button
+            type="button"
+            onClick={() => setFollowUpAt("")}
+            className="inline-flex items-center justify-center rounded-full border border-[var(--workspace-form-border-soft)] bg-[var(--workspace-form-surface)] px-3 py-2 text-xs font-medium text-[var(--workspace-form-title)] transition hover:border-[var(--workspace-form-border)] dark:border-gray-800 dark:bg-gray-950/60 dark:text-white"
+          >
+            Clear reminder
+          </button>
+        ) : null}
         {application.workflow.interviewKit.length > 0 ? (
           <button
             type="button"
@@ -309,6 +338,12 @@ function fromDateTimeLocalValue(value: string) {
 
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function addDaysToNow(days: number) {
+  const next = new Date();
+  next.setDate(next.getDate() + days);
+  return next.toISOString();
 }
 
 const inputClassName =

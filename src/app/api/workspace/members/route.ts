@@ -18,6 +18,7 @@ import {
 } from "@/lib/mail-service";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
+import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 
 export const runtime = "nodejs";
@@ -123,6 +124,7 @@ export async function POST(request: Request) {
       memberId: invite.member.id,
       role,
       sender: session.email,
+      workspaceUrl: `${new URL(request.url).origin}${appendWorkspaceQuery("/workspace", session.workspaceId)}`,
     }).catch(() => undefined);
 
     return NextResponse.json({ ...invite, mailDelivery });

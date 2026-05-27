@@ -16,6 +16,7 @@ import {
   normalizeHiringApplicationWorkflow,
 } from "@/lib/hiring-application-workflow";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
+import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,6 +88,7 @@ export async function PATCH(
     }
 
     const payload = (await request.json().catch(() => ({}))) as Partial<{
+      followUpAt: string | null;
       interviewDate: string | null;
       interviewPlan: string;
       lastContactedAt: string | null;
@@ -118,11 +120,23 @@ export async function PATCH(
       return NextResponse.json({ error: "Application not found." }, { status: 404 });
     }
 
+    const origin = new URL(request.url).origin;
+    const pipelineUrl = `${origin}${appendWorkspaceQuery(
+      `/pipeline?form=${encodeURIComponent(updated.formId)}&application=${encodeURIComponent(updated.id)}`,
+      session.workspaceId
+    )}`;
+    const candidateMailUrl = `${origin}${appendWorkspaceQuery(
+      `/candidate-mail?form=${encodeURIComponent(updated.formId)}&application=${encodeURIComponent(updated.id)}`,
+      session.workspaceId
+    )}`;
+
     await createWorkspaceAuditEvent({
       action: "application.workflow.updated",
       actorEmail: session.email,
       actorRole: session.role,
       metadata: {
+        followUpAt: updated.workflow.followUpAt,
+        interviewDate: updated.workflow.interviewDate,
         ownerEmail: updated.workflow.ownerEmail,
         stage: updated.workflow.stage,
         tags: updated.workflow.tags,
@@ -136,7 +150,9 @@ export async function PATCH(
       applicationId: updated.id,
       candidateEmail: updated.applicant.email,
       candidateName: updated.applicant.fullName,
+      candidateMailUrl,
       formId: updated.formId,
+      pipelineUrl,
       workflow: updated.workflow,
     }).catch(() => undefined);
 

@@ -8,7 +8,7 @@ declare global {
   var __hrBoardPostgresSchemaKey: string | undefined;
 }
 
-const POSTGRES_SCHEMA_KEY = "2026-05-24-analytics-workflow-audit-v1";
+const POSTGRES_SCHEMA_KEY = "2026-05-25-workspace-mail-smtp-v1";
 
 export function isPostgresConfigured() {
   return Boolean(process.env.DATABASE_URL?.trim());
@@ -230,6 +230,34 @@ async function createSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+    `,
+    `
+    ALTER TABLE workspace_mail_connections
+      ADD COLUMN IF NOT EXISTS connected_account_email TEXT NOT NULL DEFAULT ''
+    `,
+    `
+    ALTER TABLE workspace_mail_connections
+      ADD COLUMN IF NOT EXISTS sender_identity TEXT NOT NULL DEFAULT 'unknown'
+    `,
+    `
+    ALTER TABLE workspace_mail_connections
+      ADD COLUMN IF NOT EXISTS smtp_host TEXT NOT NULL DEFAULT ''
+    `,
+    `
+    ALTER TABLE workspace_mail_connections
+      ADD COLUMN IF NOT EXISTS smtp_port INTEGER NOT NULL DEFAULT 587
+    `,
+    `
+    ALTER TABLE workspace_mail_connections
+      ADD COLUMN IF NOT EXISTS smtp_secure BOOLEAN NOT NULL DEFAULT FALSE
+    `,
+    `
+    ALTER TABLE workspace_mail_connections
+      ADD COLUMN IF NOT EXISTS smtp_username TEXT NOT NULL DEFAULT ''
+    `,
+    `
+    ALTER TABLE workspace_mail_connections
+      ADD COLUMN IF NOT EXISTS smtp_password TEXT NOT NULL DEFAULT ''
     `,
     `
     CREATE TABLE IF NOT EXISTS workspace_control_settings (

@@ -12,6 +12,7 @@ export default function WorkspaceAuditPage({
   const [query, setQuery] = useState("");
   const [actionFilter, setActionFilter] = useState("all");
   const [actorFilter, setActorFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
 
   const actionOptions = useMemo(
     () => Array.from(new Set(events.map((event) => event.action))).sort((a, b) => a.localeCompare(b)),
@@ -30,6 +31,10 @@ export default function WorkspaceAuditPage({
         return false;
       }
 
+      if (categoryFilter !== "all" && deriveAuditCategory(event.action) !== categoryFilter) {
+        return false;
+      }
+
       if (!normalizedQuery) {
         return true;
       }
@@ -45,7 +50,7 @@ export default function WorkspaceAuditPage({
         .toLowerCase()
         .includes(normalizedQuery);
     });
-  }, [actionFilter, actorFilter, events, query]);
+  }, [actionFilter, actorFilter, categoryFilter, events, query]);
 
   const adminEvents = useMemo(
     () => events.filter((event) => event.actorRole === "admin").length,
@@ -53,6 +58,22 @@ export default function WorkspaceAuditPage({
   );
   const systemEvents = useMemo(
     () => events.filter((event) => !event.actorEmail).length,
+    [events]
+  );
+  const accessEvents = useMemo(
+    () => events.filter((event) => deriveAuditCategory(event.action) === "access").length,
+    [events]
+  );
+  const billingEvents = useMemo(
+    () => events.filter((event) => deriveAuditCategory(event.action) === "billing").length,
+    [events]
+  );
+  const integrationEvents = useMemo(
+    () => events.filter((event) => deriveAuditCategory(event.action) === "integration").length,
+    [events]
+  );
+  const deletionEvents = useMemo(
+    () => events.filter((event) => deriveAuditCategory(event.action) === "deletion").length,
     [events]
   );
 
@@ -93,7 +114,14 @@ export default function WorkspaceAuditPage({
           </div>
         </div>
 
-        <div className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_200px_200px]">
+        <div className="grid gap-3 border-b border-gray-200 p-6 dark:border-gray-800 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard label="Access" value={String(accessEvents)} helper="Keys, members, and access changes" />
+          <MetricCard label="Billing" value={String(billingEvents)} helper="Payments and subscription activity" />
+          <MetricCard label="Integrations" value={String(integrationEvents)} helper="Webhook and Slack configuration changes" />
+          <MetricCard label="Deletions" value={String(deletionEvents)} helper="Destructive actions and removals" />
+        </div>
+
+        <div className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_220px_200px_200px]">
           <label className="space-y-2">
             <span className="text-sm font-medium text-gray-900 dark:text-white">Search</span>
             <input
@@ -116,6 +144,22 @@ export default function WorkspaceAuditPage({
                   {action}
                 </option>
               ))}
+            </select>
+          </label>
+          <label className="space-y-2">
+            <span className="text-sm font-medium text-gray-900 dark:text-white">Category</span>
+            <select
+              value={categoryFilter}
+              onChange={(event) => setCategoryFilter(event.target.value)}
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-hidden transition focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 dark:border-gray-700 dark:bg-gray-950 dark:text-white/90"
+            >
+              <option value="all">All categories</option>
+              <option value="access">Access</option>
+              <option value="billing">Billing</option>
+              <option value="integration">Integrations</option>
+              <option value="workflow">Workflow</option>
+              <option value="forms">Forms</option>
+              <option value="deletion">Deletion</option>
             </select>
           </label>
           <label className="space-y-2">
@@ -155,6 +199,7 @@ export default function WorkspaceAuditPage({
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                      <Badge>{humanizeAuditCategory(deriveAuditCategory(event.action))}</Badge>
                       <Badge>{event.action}</Badge>
                       <Badge>{event.targetType}</Badge>
                       <Badge>{event.actorRole}</Badge>
@@ -218,4 +263,51 @@ function Badge({ children }: { children: string }) {
       {children}
     </span>
   );
+}
+
+function deriveAuditCategory(action: string) {
+  if (action.startsWith("workspace.member") || action.startsWith("workspace.access")) {
+    return "access";
+  }
+
+  if (action.startsWith("billing.")) {
+    return "billing";
+  }
+
+  if (action.startsWith("workspace.integrations")) {
+    return "integration";
+  }
+
+  if (action.startsWith("application.workflow") || action.startsWith("application.")) {
+    return "workflow";
+  }
+
+  if (action.startsWith("form.")) {
+    return "forms";
+  }
+
+  if (action.includes("deleted")) {
+    return "deletion";
+  }
+
+  return "other";
+}
+
+function humanizeAuditCategory(value: string) {
+  switch (value) {
+    case "access":
+      return "Access";
+    case "billing":
+      return "Billing";
+    case "integration":
+      return "Integration";
+    case "workflow":
+      return "Workflow";
+    case "forms":
+      return "Forms";
+    case "deletion":
+      return "Deletion";
+    default:
+      return "Other";
+  }
 }

@@ -11,6 +11,7 @@ import {
 } from "@/lib/hiring-funnel-store";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
+import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 import type { ApplicantProfile } from "@/types/hiring-funnel";
 
 export const runtime = "nodejs";
@@ -135,9 +136,17 @@ export async function POST(
       applicationId: application.id,
       candidateEmail: applicant.email,
       candidateName: applicant.fullName,
+      candidateMailUrl: `${new URL(request.url).origin}${appendWorkspaceQuery(
+        `/candidate-mail?form=${encodeURIComponent(formId)}&application=${encodeURIComponent(application.id)}`,
+        fullForm.workspaceId
+      )}`,
       decision: application.analysis.result.recommendation.decision,
       formId,
       formTitle: fullForm.title,
+      pipelineUrl: `${new URL(request.url).origin}${appendWorkspaceQuery(
+        `/pipeline?form=${encodeURIComponent(formId)}&application=${encodeURIComponent(application.id)}`,
+        fullForm.workspaceId
+      )}`,
       score: application.analysis.result.score.value,
       workflow: application.workflow,
     }).catch(() => undefined);

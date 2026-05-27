@@ -1,5 +1,10 @@
 import type { AnalysisProvider } from "@/types/document-intelligence";
 
+import {
+  WORKSPACE_FEATURE_MODULES,
+  type WorkspaceFeatureKey,
+} from "@/lib/workspace-controls";
+
 export type WorkspaceAssistantRole = "admin" | "member";
 
 export type WorkspaceAssistantMessage = {
@@ -15,6 +20,7 @@ export type WorkspaceAssistantContext = {
 };
 
 type WorkspaceToolGuide = {
+  key: string;
   name: string;
   path: string;
   summary: string;
@@ -23,10 +29,17 @@ type WorkspaceToolGuide = {
   keywords: string[];
 };
 
-const WORKSPACE_TOOL_GUIDES: WorkspaceToolGuide[] = [
-  {
-    name: "Screen CV",
-    path: "/upload",
+type WorkspaceToolGuideOverride = {
+  summary: string;
+  howToUse: string[];
+  keywords: string[];
+  adminOnly?: boolean;
+};
+
+const WORKSPACE_TOOL_GUIDE_OVERRIDES: Partial<
+  Record<WorkspaceFeatureKey, WorkspaceToolGuideOverride>
+> = {
+  screen_cv: {
     summary:
       "Upload a CV or document, add role context, and get an evidence-led screening with score rationale, strengths, risks, and interview prompts.",
     howToUse: [
@@ -44,9 +57,7 @@ const WORKSPACE_TOOL_GUIDES: WorkspaceToolGuide[] = [
       "screening result",
     ],
   },
-  {
-    name: "Results",
-    path: "/results",
+  results: {
     summary:
       "Reopen saved screenings, compare candidate evidence, and keep recruiter feedback inside the shared workspace history.",
     howToUse: [
@@ -64,9 +75,37 @@ const WORKSPACE_TOOL_GUIDES: WorkspaceToolGuide[] = [
       "past screenings",
     ],
   },
-  {
-    name: "Hiring Pipeline",
-    path: "/pipeline",
+  analytics: {
+    summary:
+      "Track submission volume, stage movement, interview activity, and workspace health trends from one analytics surface.",
+    howToUse: [
+      "Open Analytics to review the current workspace hiring trend lines.",
+      "Use the charts and summaries to spot conversion, stage delays, and interview patterns.",
+      "Return here when you need performance context before changing forms, screening, or follow-up flow.",
+    ],
+    keywords: ["analytics", "metrics", "reports", "dashboard", "trends", "performance"],
+  },
+  operations: {
+    summary:
+      "Work through overdue follow-ups, interviews due soon, stale reviews, and other recruiter actions that need attention.",
+    howToUse: [
+      "Open Operations to see the current action queue.",
+      "Use the grouped cards to find overdue reminders, upcoming interviews, and stale candidates fast.",
+      "Open the linked candidate or pipeline view directly from the queue to clear the task.",
+    ],
+    keywords: ["operations", "queue", "follow up", "follow-up", "reminders", "stale review"],
+  },
+  audit_log: {
+    summary:
+      "Review access, workflow, billing, and integration activity across the workspace with filters and export support.",
+    howToUse: [
+      "Open Audit Log to review what changed in the workspace.",
+      "Use the filters to focus on access, workflow, billing, integration, or deletion activity.",
+      "Export the current list when you need a compliance or investigation trail.",
+    ],
+    keywords: ["audit", "audit log", "activity log", "compliance", "history", "export log"],
+  },
+  pipeline: {
     summary:
       "Create hiring forms, generate job descriptions or form drafts with AI, collect submissions, and review applicants in one pipeline.",
     howToUse: [
@@ -86,16 +125,30 @@ const WORKSPACE_TOOL_GUIDES: WorkspaceToolGuide[] = [
       "generate jd",
     ],
   },
-  {
-    name: "Workspace Settings",
-    path: "/workspace",
-    adminOnly: true,
+  candidate_mail: {
+    summary:
+      "Compose rejection and follow-up emails, request approval, and send candidate communication from one shared workspace flow.",
+    howToUse: [
+      "Open Candidate Mail and choose the form plus candidate you want to contact.",
+      "Generate or edit a rejection or follow-up draft, then review the final subject and body.",
+      "Approve and send it inside the workspace, or route it through the approval flow first.",
+    ],
+    keywords: [
+      "candidate mail",
+      "candidate email",
+      "follow up email",
+      "rejection email",
+      "approval flow",
+      "email draft",
+    ],
+  },
+  workspace_settings: {
     summary:
       "Control branding, invite team members, connect a workspace inbox, and manage shared access and security settings.",
     howToUse: [
-      "Update the company name, product name, colors, and public-facing branding.",
-      "Invite teammates, manage member access, and connect the workspace email sender.",
-      "Use the security area for shared key changes, workspace cleanup, and other admin controls.",
+      "Use General to update company details, product branding, and public form styling.",
+      "Use Team to manage members and connect the workspace sender email.",
+      "Use Integrations and Security for webhooks, Slack, shared access, and workspace lifecycle controls.",
     ],
     keywords: [
       "workspace",
@@ -109,6 +162,23 @@ const WORKSPACE_TOOL_GUIDES: WorkspaceToolGuide[] = [
       "connect inbox",
       "workspace email",
     ],
+    adminOnly: true,
+  },
+};
+
+const EXTRA_WORKSPACE_TOOL_GUIDES: WorkspaceToolGuide[] = [
+  {
+    key: "billing",
+    name: "Workspace Billing",
+    path: "/billing",
+    summary:
+      "Review billing status, choose a payment cycle, and pay or upgrade workspace access from the built-in billing page.",
+    howToUse: [
+      "Open Workspace Billing to review the current plan and payment status.",
+      "Choose the monthly or yearly cycle that fits your workspace before checkout.",
+      "Use the secure checkout flow to pay or upgrade when billing is active for your workspace.",
+    ],
+    keywords: ["billing", "subscription", "payment", "upgrade", "plan", "checkout"],
   },
 ];
 
@@ -123,29 +193,28 @@ export function getWorkspaceAssistantOrganizationFirstName(organizationName: str
 }
 
 export function getWorkspaceAssistantPageLabel(pathname: string) {
-  if (pathname.startsWith("/upload")) {
-    return "Screen CV";
-  }
-
-  if (pathname.startsWith("/results")) {
-    return "Results";
-  }
-
-  if (pathname.startsWith("/pipeline")) {
-    return "Hiring Pipeline";
-  }
-
-  if (pathname.startsWith("/workspace")) {
-    return "Workspace Settings";
-  }
-
-  return "Workspace";
+  return (
+    findWorkspaceGuideByPath(pathname, "member")?.name ??
+    findWorkspaceGuideByPath(pathname, "admin")?.name ??
+    "Workspace"
+  );
 }
 
 export function getWorkspaceAssistantQuickPrompts(context: WorkspaceAssistantContext) {
+  const currentGuide = findWorkspaceGuideByPath(context.pathname, context.role);
   const prompts = ["Give me a quick workspace tour"];
 
-  if (context.pathname.startsWith("/upload")) {
+  if (!currentGuide) {
+    prompts.push("How do I screen a CV?", "How do I use Hiring Pipeline?");
+
+    if (context.role === "admin") {
+      prompts.push("How do Workspace Settings work?");
+    }
+
+    return prompts.slice(0, 4);
+  }
+
+  if (currentGuide.path === "/upload") {
     prompts.push(
       "How do I screen a CV here?",
       "What should I upload first?",
@@ -154,7 +223,7 @@ export function getWorkspaceAssistantQuickPrompts(context: WorkspaceAssistantCon
     return prompts;
   }
 
-  if (context.pathname.startsWith("/results")) {
+  if (currentGuide.path === "/results") {
     prompts.push(
       "How do I use the saved results here?",
       "How do I compare past screenings?",
@@ -163,7 +232,7 @@ export function getWorkspaceAssistantQuickPrompts(context: WorkspaceAssistantCon
     return prompts;
   }
 
-  if (context.pathname.startsWith("/pipeline")) {
+  if (currentGuide.path === "/pipeline") {
     prompts.push(
       "How do I use Hiring Pipeline?",
       "Help me generate a JD here",
@@ -172,7 +241,52 @@ export function getWorkspaceAssistantQuickPrompts(context: WorkspaceAssistantCon
     return prompts;
   }
 
-  if (context.pathname.startsWith("/workspace") && context.role === "admin") {
+  if (currentGuide.path === "/candidate-mail") {
+    prompts.push(
+      "How do I send a rejection email from here?",
+      "How do approvals work in Candidate Mail?",
+      "How do I draft a follow-up email?"
+    );
+    return prompts;
+  }
+
+  if (currentGuide.path === "/analytics") {
+    prompts.push(
+      "What should I watch in Analytics?",
+      "How do I read the workspace trends here?",
+      "How do operations and analytics connect?"
+    );
+    return prompts;
+  }
+
+  if (currentGuide.path === "/operations") {
+    prompts.push(
+      "How do I clear the operations queue?",
+      "What does overdue follow-up mean here?",
+      "How do I jump from this queue back into the pipeline?"
+    );
+    return prompts;
+  }
+
+  if (currentGuide.path === "/audit") {
+    prompts.push(
+      "How do I use Audit Log filters?",
+      "What kind of activity is recorded here?",
+      "How do I export the audit trail?"
+    );
+    return prompts;
+  }
+
+  if (currentGuide.path === "/billing") {
+    prompts.push(
+      "How does workspace billing work?",
+      "How do I choose monthly or yearly billing?",
+      "When do upgrade options appear?"
+    );
+    return prompts;
+  }
+
+  if (currentGuide.path === "/workspace" && context.role === "admin") {
     prompts.push(
       "How do Workspace Settings work?",
       "How do I invite a teammate from here?",
@@ -181,20 +295,18 @@ export function getWorkspaceAssistantQuickPrompts(context: WorkspaceAssistantCon
     return prompts;
   }
 
-  prompts.push("What does Screen CV do?", "How do I use Hiring Pipeline?");
-
-  if (context.role === "admin") {
-    prompts.push("How do Workspace Settings work?");
-  } else {
-    prompts.push(`What can I do on ${getWorkspaceAssistantPageLabel(context.pathname)}?`);
-  }
+  prompts.push(
+    `How do I use ${currentGuide.name}?`,
+    `What should I do on ${currentGuide.name}?`,
+    "What next step do you recommend here?"
+  );
 
   return prompts.slice(0, 4);
 }
 
 export function buildWorkspaceAssistantWelcomeMessage(context: WorkspaceAssistantContext) {
   const firstName = getWorkspaceAssistantOrganizationFirstName(context.organizationName);
-  const tools = getVisibleToolGuides(context.role);
+  const tools = getVisibleWorkspaceToolGuides(context.role);
 
   return [
     `Hi ${firstName}, welcome to ${context.appName}.`,
@@ -215,7 +327,7 @@ export function buildWorkspaceAssistantSystemPrompt({
   messages: WorkspaceAssistantMessage[];
   provider?: AnalysisProvider;
 }) {
-  const visibleTools = getVisibleToolGuides(context.role);
+  const visibleTools = getVisibleWorkspaceToolGuides(context.role);
   const currentPage = getWorkspaceAssistantPageLabel(context.pathname);
   const pageActionTip = getWorkspaceAssistantPageActionTip(context);
   const conversation = messages
@@ -247,7 +359,9 @@ Product behavior notes:
 - Screen CV is where users upload candidate files and run AI screening.
 - Results is where users revisit saved screening results and recruiter notes.
 - Hiring Pipeline is where users build forms, generate job descriptions or form drafts with AI, publish application flows, and review applicants.
-- Workspace Settings is admin-only and covers branding, team access, sender email connection, and security controls.
+- Candidate Mail is where users draft recruiter emails, request approval, and send candidate communication.
+- Analytics, Operations, Audit Log, and Billing are shared workspace pages with their own routes and should be linked when relevant.
+- Workspace Settings is admin-only and covers branding, team access, sender email connection, integrations, and security controls.
 - The workspace bot can also accept one CV or a shortlist batch, run screening for the user, and open the saved result page automatically.
 - Sign-up now uses email verification before workspace creation.
 - Sign-in now uses a 6-digit second-factor code after the access key is accepted.
@@ -284,7 +398,7 @@ export function buildLocalWorkspaceAssistantReply({
   const lastUserMessage =
     [...messages].reverse().find((message) => message.role === "user")?.content.trim() || "";
   const normalizedQuestion = lastUserMessage.toLowerCase();
-  const visibleTools = getVisibleToolGuides(context.role);
+  const visibleTools = getVisibleWorkspaceToolGuides(context.role);
   const pageLabel = getWorkspaceAssistantPageLabel(context.pathname);
 
   if (!normalizedQuestion) {
@@ -312,6 +426,8 @@ export function buildLocalWorkspaceAssistantReply({
       "bot screen",
       "attachment",
       "attached cv",
+      "shortlist batch",
+      "bulk screening",
     ])
   ) {
     return [
@@ -334,7 +450,7 @@ export function buildLocalWorkspaceAssistantReply({
       "what can i do here",
     ])
   ) {
-    const currentTool = visibleTools.find((tool) => tool.name === pageLabel);
+    const currentTool = findWorkspaceGuideByPath(context.pathname, context.role);
 
     if (currentTool) {
       return buildToolReply(currentTool, context.role, {
@@ -347,10 +463,10 @@ export function buildLocalWorkspaceAssistantReply({
       .join(", ")} and I will walk you through the steps.`;
   }
 
-  for (const tool of visibleTools) {
-    if (containsAny(normalizedQuestion, tool.keywords)) {
-      return buildToolReply(tool, context.role);
-    }
+  const matchedTool = visibleTools.find((tool) => containsAny(normalizedQuestion, tool.keywords));
+
+  if (matchedTool) {
+    return buildToolReply(matchedTool, context.role);
   }
 
   if (
@@ -365,30 +481,10 @@ export function buildLocalWorkspaceAssistantReply({
   ) {
     return [
       "Here is how secure access now works:",
-      "- New workspace sign-up sends a 6-digit code to the admin email before the workspace is created.",
-      "- Workspace sign-in checks the access key first, then sends a second 6-digit code before the session opens.",
-      "- If a code expires or fails, you can request a fresh one from the same screen.",
+      "1. New workspace sign-up sends a 6-digit code to the admin email before the workspace is created.",
+      "2. Workspace sign-in checks the access key first, then sends a second 6-digit code before the session opens.",
+      "3. If a code expires or fails, you can request a fresh one from the same screen.",
     ].join("\n");
-  }
-
-  if (
-    context.role === "admin" &&
-    containsAny(normalizedQuestion, [
-      "invite",
-      "team member",
-      "member access",
-      "workspace email",
-      "company inbox",
-      "branding",
-    ])
-  ) {
-    const settingsTool = visibleTools.find((tool) => tool.name === "Workspace Settings");
-
-    if (settingsTool) {
-      return buildToolReply(settingsTool, context.role, {
-        intro: `That task lives in ${formatToolLink(settingsTool)}, where admins control branding, invites, sender email, and security.`,
-      });
-    }
   }
 
   if (
@@ -405,11 +501,11 @@ export function buildLocalWorkspaceAssistantReply({
   ) {
     return [
       "Those controls live in [Workspace Settings](/workspace) and are limited to workspace admins.",
-      "If you need branding, team access, sender email, or shared security changes, ask a workspace admin to open that area for you step by step.",
+      "If you need branding, team access, sender email, or shared security changes, ask a workspace admin to open that area for you.",
     ].join("\n");
   }
 
-  const currentTool = visibleTools.find((tool) => tool.name === pageLabel);
+  const currentTool = findWorkspaceGuideByPath(context.pathname, context.role);
 
   return [
     `I can help with ${visibleTools.map((tool) => formatToolLink(tool)).join(", ")}.`,
@@ -424,8 +520,37 @@ export function buildLocalWorkspaceAssistantReply({
   ].join("\n");
 }
 
-function getVisibleToolGuides(role: WorkspaceAssistantRole) {
-  return WORKSPACE_TOOL_GUIDES.filter((tool) => !tool.adminOnly || role === "admin");
+function getVisibleWorkspaceToolGuides(role: WorkspaceAssistantRole) {
+  return getWorkspaceToolGuides().filter((tool) => !tool.adminOnly || role === "admin");
+}
+
+function getWorkspaceToolGuides(): WorkspaceToolGuide[] {
+  const moduleGuides = WORKSPACE_FEATURE_MODULES.filter((module) => module.path).map((module) => {
+    const override = WORKSPACE_TOOL_GUIDE_OVERRIDES[module.key];
+
+    return {
+      key: module.key,
+      name: module.label,
+      path: module.path,
+      summary: override?.summary ?? module.description,
+      howToUse:
+        override?.howToUse ??
+        buildDefaultHowToUse(module.label, module.path, module.description),
+      keywords: uniqueKeywords([
+        ...(override?.keywords ?? []),
+        ...buildDefaultKeywords(module.label, module.path, module.description),
+      ]),
+      adminOnly: override?.adminOnly,
+    };
+  });
+
+  return [...moduleGuides, ...EXTRA_WORKSPACE_TOOL_GUIDES];
+}
+
+function findWorkspaceGuideByPath(pathname: string, role: WorkspaceAssistantRole) {
+  return getVisibleWorkspaceToolGuides(role)
+    .filter((tool) => pathname === tool.path || pathname.startsWith(`${tool.path}/`))
+    .sort((left, right) => right.path.length - left.path.length)[0] ?? null;
 }
 
 function buildToolReply(
@@ -469,23 +594,42 @@ function linkToolNameInText(text: string, tool: Pick<WorkspaceToolGuide, "name" 
 }
 
 function getWorkspaceAssistantPageActionTip(context: WorkspaceAssistantContext) {
-  if (context.pathname.startsWith("/upload")) {
-    return "Guide the user through uploading a candidate file, adding role context, and knowing where the screening result appears next.";
+  const currentTool = findWorkspaceGuideByPath(context.pathname, context.role);
+
+  if (!currentTool) {
+    return "Guide the user to the right workspace tool based on what they want to do next.";
   }
 
-  if (context.pathname.startsWith("/results")) {
-    return "Guide the user through reviewing saved screenings, comparing evidence, and deciding what to revisit or move forward.";
+  if (currentTool.path === "/workspace" && context.role !== "admin") {
+    return "Explain that this area is limited to workspace admins.";
   }
 
-  if (context.pathname.startsWith("/pipeline")) {
-    return "Guide the user through creating forms, generating a JD or form draft with AI, publishing the form, and reviewing candidate submissions.";
-  }
+  return `Guide the user through ${currentTool.name} using short, practical steps tied to what they can do on ${formatToolLink(
+    currentTool
+  )} right now.`;
+}
 
-  if (context.pathname.startsWith("/workspace")) {
-    return context.role === "admin"
-      ? "Guide the user through branding, member invites, workspace email connection, and shared security controls."
-      : "Explain that this area is limited to workspace admins.";
-  }
+function buildDefaultHowToUse(label: string, path: string, description: string) {
+  return [
+    `Open ${label} from ${formatPathForHumans(path)}.`,
+    `Use this area to ${description.charAt(0).toLowerCase()}${description.slice(1)}`,
+    `Return here whenever you want to work on ${label.toLowerCase()} again.`,
+  ];
+}
 
-  return "Guide the user to the right workspace tool based on what they want to do next.";
+function buildDefaultKeywords(label: string, path: string, description: string) {
+  const combined = `${label} ${path.replaceAll("/", " ")} ${description}`.toLowerCase();
+
+  return combined
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
+function formatPathForHumans(path: string) {
+  return path === "/" ? "the home page" : path;
+}
+
+function uniqueKeywords(keywords: string[]) {
+  return [...new Set(keywords.map((keyword) => keyword.toLowerCase()).filter(Boolean))];
 }

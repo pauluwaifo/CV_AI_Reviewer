@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 
 const WORKSPACE_MAIL_OAUTH_COOKIE = "workspace-mail-oauth";
 const googleTokenUrl = "https://oauth2.googleapis.com/token";
+const gmailSendAsUrl = "https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs";
 
 export async function GET(request: Request) {
   const session = await requireWorkspaceApiSession(request);
@@ -90,10 +91,19 @@ export async function GET(request: Request) {
       }),
     });
     const tokenPayload = (await tokenResponse.json().catch(() => null)) as
-      | { refresh_token?: string; error_description?: string; error?: string }
+      | {
+          access_token?: string;
+          refresh_token?: string;
+          error_description?: string;
+          error?: string;
+        }
       | null;
 
-    if (!tokenResponse.ok || !tokenPayload?.refresh_token) {
+    if (
+      !tokenResponse.ok ||
+      !tokenPayload?.refresh_token ||
+      !tokenPayload.access_token
+    ) {
       throw new Error(
         tokenPayload?.error_description ||
           tokenPayload?.error ||
@@ -101,18 +111,28 @@ export async function GET(request: Request) {
       );
     }
 
+    const senderVerification = await verifyGoogleWorkspaceSender({
+      accessToken: tokenPayload.access_token,
+      requestedFromEmail: pending.fromEmail,
+    });
+
     await saveWorkspaceMailConnection({
+      provider: "gmail",
       workspaceId: session.workspaceId,
       fromEmail: pending.fromEmail,
       clientId,
       clientSecret,
       refreshToken: tokenPayload.refresh_token,
+      connectedAccountEmail: senderVerification.connectedAccountEmail,
+      senderIdentity: senderVerification.senderIdentity,
     });
 
     return redirectWithStatus(
       request,
       "connected",
-      `Google inbox connected for ${pending.fromEmail}.`
+      senderVerification.senderIdentity === "alias"
+        ? `Google inbox connected. ${pending.fromEmail} is verified as an alias on ${senderVerification.connectedAccountEmail}.`
+        : `Google inbox connected for ${pending.fromEmail}.`
     );
   } catch (connectError) {
     return redirectWithStatus(
@@ -128,6 +148,7 @@ export async function GET(request: Request) {
 function redirectWithStatus(request: Request, status: string, message: string) {
   const url = new URL("/workspace", request.url);
 
+  url.searchParams.set("tab", "team");
   url.searchParams.set("mail", status);
   url.searchParams.set("mail_message", message);
 
@@ -144,6 +165,69 @@ function redirectWithStatus(request: Request, status: string, message: string) {
   });
 
   return response;
+}
+
+async function verifyGoogleWorkspaceSender({
+  accessToken,
+  requestedFromEmail,
+}: {
+  accessToken: string;
+  requestedFromEmail: string;
+}) {
+  const response = await fetch(gmailSendAsUrl, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | {
+        sendAs?: Array<{
+          sendAsEmail?: string;
+          isPrimary?: boolean;
+          isDefault?: boolean;
+          verificationStatus?: string;
+        }>;
+        error?: { message?: string };
+      }
+    | null;
+
+  if (!response.ok || !Array.isArray(payload?.sendAs) || payload.sendAs.length === 0) {
+    throw new Error(
+      payload?.error?.message ||
+        "Google could not verify the mailbox or alias for this workspace sender."
+    );
+  }
+
+  const normalizedRequestedEmail = requestedFromEmail.trim().toLowerCase();
+  const primaryIdentity =
+    payload.sendAs.find((item) => item.isPrimary) ??
+    payload.sendAs.find((item) => item.isDefault) ??
+    payload.sendAs[0];
+  const matchingIdentity = payload.sendAs.find((item) => {
+    const sendAsEmail = item.sendAsEmail?.trim().toLowerCase() ?? "";
+    return (
+      sendAsEmail === normalizedRequestedEmail &&
+      (!item.verificationStatus || item.verificationStatus.toLowerCase() === "accepted")
+    );
+  });
+
+  if (!matchingIdentity) {
+    const connectedAccountEmail =
+      primaryIdentity?.sendAsEmail?.trim().toLowerCase() || "the connected Google account";
+
+    throw new Error(
+      `${requestedFromEmail} is not the primary Google mailbox or a verified Send mail as alias on ${connectedAccountEmail}. Add it as a Google alias, or use SMTP for this custom-domain sender.`
+    );
+  }
+
+  return {
+    connectedAccountEmail:
+      primaryIdentity?.sendAsEmail?.trim().toLowerCase() ||
+      matchingIdentity.sendAsEmail?.trim().toLowerCase() ||
+      normalizedRequestedEmail,
+    senderIdentity: matchingIdentity.isPrimary ? ("primary" as const) : ("alias" as const),
+  };
 }
 
 function decodePendingOAuthState(cookieValue: string | null) {

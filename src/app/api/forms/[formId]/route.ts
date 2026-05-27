@@ -15,6 +15,7 @@ import {
 } from "@/lib/hiring-funnel-store";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
+import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 import type { RoleSetup } from "@/types/document-intelligence";
 import type { HiringFormField, HiringFormFieldType, HiringFormQuestion } from "@/types/hiring-funnel";
 
@@ -88,6 +89,7 @@ export async function PATCH(
   try {
     const formData = await request.formData();
     const action = String(formData.get("action") || "").trim();
+    const origin = new URL(request.url).origin;
 
     if (action === "set-published") {
       const published = String(formData.get("published") || "") === "true";
@@ -116,6 +118,11 @@ export async function PATCH(
       await emitWorkspaceIntegrationEvent(session.workspaceId, "form.updated", {
         formId: form.id,
         published,
+        pipelineUrl: `${origin}${appendWorkspaceQuery(
+          `/pipeline?form=${encodeURIComponent(form.id)}`,
+          session.workspaceId
+        )}`,
+        publicFormUrl: `${origin}/apply/${form.id}`,
         title: form.title,
       }).catch(() => undefined);
 
@@ -172,6 +179,11 @@ export async function PATCH(
     await emitWorkspaceIntegrationEvent(session.workspaceId, "form.updated", {
       formId: form.id,
       published: form.published,
+      pipelineUrl: `${origin}${appendWorkspaceQuery(
+        `/pipeline?form=${encodeURIComponent(form.id)}`,
+        session.workspaceId
+      )}`,
+      publicFormUrl: `${origin}/apply/${form.id}`,
       title: form.title,
     }).catch(() => undefined);
 
@@ -229,6 +241,7 @@ export async function DELETE(
   }).catch(() => undefined);
   await emitWorkspaceIntegrationEvent(session.workspaceId, "form.deleted", {
     formId,
+    pipelineUrl: `${new URL(request.url).origin}${appendWorkspaceQuery("/pipeline", session.workspaceId)}`,
   }).catch(() => undefined);
 
   return NextResponse.json({ ok: true });

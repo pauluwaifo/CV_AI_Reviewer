@@ -12,6 +12,7 @@ import {
 } from "@/lib/workspace-billing";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
+import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
       }).catch(() => undefined);
       await emitWorkspaceIntegrationEvent(session.workspaceId, "billing.payment_succeeded", {
         amountKobo: transaction.amountKobo,
+        billingUrl: `${new URL(request.url).origin}${appendWorkspaceQuery("/billing", session.workspaceId)}`,
         planName: summary.controls.billing.planName,
         reference: transaction.reference,
         status: transaction.status,

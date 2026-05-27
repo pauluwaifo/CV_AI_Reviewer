@@ -347,7 +347,10 @@ function normalizeCandidateEmailDraftRecord(
       record.deliverySource === "none"
         ? record.deliverySource
         : null,
-    deliveryProvider: record.deliveryProvider === "gmail" ? "gmail" : null,
+    deliveryProvider:
+      record.deliveryProvider === "gmail" || record.deliveryProvider === "smtp"
+        ? record.deliveryProvider
+        : null,
     deliveryMessageId: record.deliveryMessageId.trim(),
     deliveryFromEmail: record.deliveryFromEmail.trim().toLowerCase(),
     lastError: record.lastError.trim(),
@@ -439,7 +442,10 @@ function toCandidateEmailDraftRecord(row: CandidateEmailDraftRow): CandidateEmai
       row.delivery_source === "none"
         ? row.delivery_source
         : null,
-    deliveryProvider: row.delivery_provider === "gmail" ? "gmail" : null,
+    deliveryProvider:
+      row.delivery_provider === "gmail" || row.delivery_provider === "smtp"
+        ? row.delivery_provider
+        : null,
     deliveryMessageId: row.delivery_message_id ?? "",
     deliveryFromEmail: row.delivery_from_email ?? "",
     lastError: row.last_error ?? "",

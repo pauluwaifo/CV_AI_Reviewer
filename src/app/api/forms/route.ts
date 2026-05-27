@@ -12,6 +12,7 @@ import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 import {
+  appendWorkspaceQuery,
   getWorkspacePublicSnapshot,
 } from "@/lib/workspace-settings";
 import { requireWorkspaceFeatureApiAccess } from "@/lib/workspace-module-access";
@@ -98,6 +99,11 @@ export async function POST(request: Request) {
     await emitWorkspaceIntegrationEvent(access.session.workspaceId, "form.created", {
       formId: created.id,
       published: created.published,
+      publicFormUrl: `${new URL(request.url).origin}/apply/${created.id}`,
+      pipelineUrl: `${new URL(request.url).origin}${appendWorkspaceQuery(
+        `/pipeline?form=${encodeURIComponent(created.id)}`,
+        access.session.workspaceId
+      )}`,
       title: created.title,
     }).catch(() => undefined);
 

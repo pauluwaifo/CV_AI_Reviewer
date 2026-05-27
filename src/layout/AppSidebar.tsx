@@ -8,6 +8,7 @@ import { isWorkspaceModuleAccessible } from "@/lib/workspace-controls";
 import { useSidebar } from "../context/SidebarContext";
 import {
   BoltIcon,
+  BellIcon,
   BoxCubeIcon,
   DollarLineIcon,
   DocsIcon,
@@ -51,6 +52,12 @@ export default function AppSidebar({
       path: "/analytics",
       icon: <PieChartIcon />,
       visible: isWorkspaceModuleAccessible(controls, "analytics"),
+    },
+    {
+      name: "Operations",
+      path: "/operations",
+      icon: <BellIcon />,
+      visible: isWorkspaceModuleAccessible(controls, "operations"),
     },
     {
       name: "Audit Log",

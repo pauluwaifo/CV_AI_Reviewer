@@ -133,6 +133,18 @@ function getPageTitle(pathname: string) {
     return "Hiring pipeline";
   }
 
+  if (pathname.startsWith("/analytics")) {
+    return "Workspace analytics";
+  }
+
+  if (pathname.startsWith("/operations")) {
+    return "Operations queue";
+  }
+
+  if (pathname.startsWith("/audit")) {
+    return "Audit log";
+  }
+
   if (pathname.startsWith("/candidate-mail")) {
     return "Candidate mail";
   }

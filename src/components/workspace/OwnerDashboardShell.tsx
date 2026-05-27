@@ -5,8 +5,10 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
+import OwnerAssistantEntry from "@/components/workspace/OwnerAssistantEntry";
 import { ThemeToggleButton } from "@/components/common/ThemeToggleButton";
 import type { OwnerSession } from "@/lib/owner-auth";
+import { OWNER_DASHBOARD_ITEMS } from "@/lib/owner-navigation";
 import {
   CloseIcon,
   DollarLineIcon,
@@ -17,38 +19,19 @@ import {
   PlusIcon,
 } from "@/icons";
 
-const ownerNavItems = [
-  {
-    name: "Overview",
-    description: "Platform summary",
-    path: "/owner",
-    icon: <GridIcon />,
-  },
-  {
-    name: "Recovery",
-    description: "Reset queue",
-    path: "/owner/recovery",
-    icon: <LockIcon />,
-  },
-  {
-    name: "Workspaces",
-    description: "Tenant registry",
-    path: "/owner/workspaces",
-    icon: <GroupIcon />,
-  },
-  {
-    name: "Insights",
-    description: "Health and activity",
-    path: "/owner/insights",
-    icon: <PieChartIcon />,
-  },
-  {
-    name: "Controls",
-    description: "Billing and release",
-    path: "/owner/controls",
-    icon: <DollarLineIcon />,
-  },
-] as const;
+const ownerNavItems = OWNER_DASHBOARD_ITEMS.map((item) => ({
+  ...item,
+  icon:
+    item.path === "/owner"
+      ? <GridIcon />
+      : item.path === "/owner/recovery"
+        ? <LockIcon />
+        : item.path === "/owner/workspaces"
+          ? <GroupIcon />
+          : item.path === "/owner/insights"
+            ? <PieChartIcon />
+            : <DollarLineIcon />,
+}));
 
 export default function OwnerDashboardShell({
   children,
@@ -238,10 +221,10 @@ export default function OwnerDashboardShell({
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
                     Owner Workspace
                   </p>
-                  <h1 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
+                  <h1 className="mt-1 text-xl font-semibold tracking-tight text-gray-900 dark:text-white">
                     {activeItem.name}
                   </h1>
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                  <p className="mt-1 text-xs text-gray-600 dark:text-gray-300 sm:text-sm">
                     {activeItem.description}
                   </p>
                 </div>
@@ -277,6 +260,7 @@ export default function OwnerDashboardShell({
         </header>
 
         <main className="px-4 pb-12 pt-5 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">{children}</main>
+        <OwnerAssistantEntry session={{ email: session.email }} />
       </div>
     </div>
   );

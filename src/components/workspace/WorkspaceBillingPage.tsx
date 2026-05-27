@@ -14,9 +14,12 @@ import {
   UserIcon,
 } from "@/icons";
 import {
+  BASE_WORKSPACE_BILLING_PLAN_KEY,
   getAvailableWorkspaceBillingUpgrades,
   getWorkspaceBillingIntervalOptions,
+  getWorkspaceBillingPlanLabel,
   getWorkspaceBillingUpgradePlanIntervalOptions,
+  getWorkspaceModulesForBillingPlan,
   humanizeWorkspaceBillingInterval,
   humanizeWorkspaceBillingStatus,
   isWorkspaceModuleAccessible,
@@ -126,6 +129,18 @@ export default function WorkspaceBillingPage({
           summary.controls.modules[module.key].mode === "requires_billing" &&
           !isWorkspaceModuleAccessible(summary.controls, module.key)
       ),
+    [summary.controls]
+  );
+  const basePlanModules = useMemo(
+    () => getWorkspaceModulesForBillingPlan(summary.controls, BASE_WORKSPACE_BILLING_PLAN_KEY),
+    [summary.controls]
+  );
+  const activePlanModules = useMemo(
+    () =>
+      WORKSPACE_FEATURE_MODULES.filter((module) => {
+        const access = summary.controls.modules[module.key];
+        return access.mode === "requires_billing" && isWorkspaceModuleAccessible(summary.controls, module.key);
+      }),
     [summary.controls]
   );
 
@@ -528,6 +543,13 @@ export default function WorkspaceBillingPage({
                         </button>
                       </div>
                     ) : null}
+
+                    {activePlanModules.length > 0 ? (
+                      <PlanUnlockList
+                        label="Unlocked on this plan"
+                        modules={activePlanModules.map((module) => module.label)}
+                      />
+                    ) : null}
                   </div>
 
                   {hasUpgradeOffer ? (
@@ -551,6 +573,10 @@ export default function WorkspaceBillingPage({
                           <UpgradeOptionCard
                             key={plan.key}
                             name={plan.name}
+                            unlockedModules={getWorkspaceModulesForBillingPlan(
+                              summary.controls,
+                              plan.key
+                            ).map((module) => module.label)}
                             options={getWorkspaceBillingUpgradePlanIntervalOptions(plan)}
                             onChoose={(interval) => {
                               setCheckoutIntent("upgrade");
@@ -704,6 +730,13 @@ export default function WorkspaceBillingPage({
                         }
                       />
                     </div>
+
+                    {basePlanModules.length > 0 ? (
+                      <PlanUnlockList
+                        label="Base plan unlocks"
+                        modules={basePlanModules.map((module) => module.label)}
+                      />
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -720,7 +753,10 @@ export default function WorkspaceBillingPage({
                       key={module.key}
                       className="inline-flex items-center rounded-full bg-[var(--workspace-form-pill-bg)] px-3 py-1 text-xs font-medium text-[var(--workspace-form-pill-text)] dark:bg-brand-500/15 dark:text-brand-200"
                     >
-                      {module.label}
+                      {module.label} · {getWorkspaceBillingPlanLabel(
+                        summary.controls.billing,
+                        summary.controls.modules[module.key].billingPlanKey
+                      )}
                     </span>
                   ))}
                 </div>
@@ -907,6 +943,7 @@ function UpgradeOptionCard({
   name,
   onChoose,
   options,
+  unlockedModules,
 }: {
   name: string;
   onChoose: (interval: WorkspaceBillingInterval) => void;
@@ -914,6 +951,7 @@ function UpgradeOptionCard({
     amountKobo: number;
     interval: WorkspaceBillingInterval;
   }>;
+  unlockedModules: string[];
 }) {
   return (
     <div className="rounded-xl border border-[var(--workspace-form-border-soft)] bg-white/80 p-4 dark:border-gray-800 dark:bg-gray-900/70">
@@ -935,6 +973,35 @@ function UpgradeOptionCard({
             </button>
           ))}
         </div>
+        {unlockedModules.length > 0 ? (
+          <PlanUnlockList label="Unlocks" modules={unlockedModules} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PlanUnlockList({
+  label,
+  modules,
+}: {
+  label: string;
+  modules: string[];
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-form-accent-muted)] dark:text-gray-400">
+        {label}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {modules.map((module) => (
+          <span
+            key={module}
+            className="inline-flex items-center rounded-full bg-[var(--workspace-form-pill-bg)] px-3 py-1 text-xs font-medium text-[var(--workspace-form-pill-text)] dark:bg-brand-500/15 dark:text-brand-200"
+          >
+            {module}
+          </span>
+        ))}
       </div>
     </div>
   );

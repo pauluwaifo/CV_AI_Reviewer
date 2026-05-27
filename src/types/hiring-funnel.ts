@@ -138,6 +138,7 @@ export interface HiringApplicationWorkflow {
   ownerEmail: string;
   recruiterNotes: string;
   nextStep: string;
+  followUpAt: string | null;
   tags: string[];
   interviewPlan: string;
   interviewKit: string[];

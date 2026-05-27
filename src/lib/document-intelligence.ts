@@ -7,6 +7,12 @@ import { PDFParse } from "pdf-parse";
 
 import { buildLocalAnalysis } from "@/lib/local-document-analysis";
 import {
+  buildLocalOwnerAssistantReply,
+  buildOwnerAssistantSystemPrompt,
+  type OwnerAssistantContext,
+  type OwnerAssistantMessage,
+} from "@/lib/owner-assistant";
+import {
   buildLocalWorkspaceAssistantReply,
   buildWorkspaceAssistantSystemPrompt,
   type WorkspaceAssistantContext,
@@ -531,6 +537,63 @@ export async function generateWorkspaceAssistantReply({
           activeProvider,
           state,
           buildWorkspaceAssistantSystemPrompt({
+            context,
+            messages,
+            provider,
+          })
+        );
+        const parsed = parseLooseJson(raw) as { reply?: unknown };
+
+        return {
+          detail: state.detail,
+          value: normalizeWorkspaceAssistantReply(parsed.reply, localReply),
+        };
+      }
+    );
+
+    return {
+      reply: providerResult.value,
+      provider: providerResult.provider,
+      providerDetail: providerResult.detail || undefined,
+      providerWarnings: providerResult.warnings,
+    };
+  } catch (error) {
+    return {
+      reply: localReply,
+      provider: "local",
+      providerWarnings: extractProviderWarnings(error),
+    };
+  }
+}
+
+export async function generateOwnerAssistantReply({
+  context,
+  messages,
+  provider = "auto",
+}: {
+  context: OwnerAssistantContext;
+  messages: OwnerAssistantMessage[];
+  provider?: AnalysisProvider;
+}): Promise<{
+  reply: string;
+  provider: ResolvedProvider;
+  providerDetail?: string;
+  providerWarnings: string[];
+}> {
+  const localReply = buildLocalOwnerAssistantReply({
+    context,
+    messages,
+  });
+
+  try {
+    const providerResult = await withProviderFallback(
+      provider,
+      async (activeProvider) => {
+        const state: ProviderRunState = {};
+        const raw = await generateWithProvider(
+          activeProvider,
+          state,
+          buildOwnerAssistantSystemPrompt({
             context,
             messages,
             provider,

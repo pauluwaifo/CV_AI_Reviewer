@@ -144,6 +144,15 @@ export function applyHiringApplicationWorkflowAutomations({
     automationNotes.push("Moved the candidate into Interview after an interview date was added.");
   }
 
+  if (
+    output.interviewDate &&
+    output.interviewDate !== current.interviewDate &&
+    shouldAlignFollowUpWithInterview(output.followUpAt, current.followUpAt, current.interviewDate)
+  ) {
+    output.followUpAt = output.interviewDate;
+    automationNotes.push("Aligned the follow-up reminder with the scheduled interview.");
+  }
+
   const stageChanged = current.stage !== output.stage;
   const stageDefault = getDefaultHiringApplicationNextStep(output.stage);
 
@@ -174,6 +183,22 @@ export function applyHiringApplicationWorkflowAutomations({
   output.interviewScorecard = completedScorecard;
 
   if (
+    output.stage === "on_hold" &&
+    !output.followUpAt
+  ) {
+    output.followUpAt = addDaysToIsoDate(3);
+    automationNotes.push("Set a follow-up reminder three days out for the on-hold candidate.");
+  }
+
+  if (
+    output.stage === "shortlisted" &&
+    !output.followUpAt
+  ) {
+    output.followUpAt = addDaysToIsoDate(2);
+    automationNotes.push("Set a recruiter follow-up reminder for the shortlisted candidate.");
+  }
+
+  if (
     output.stage === "interview" &&
     completedScorecard.completedAt &&
     shouldPromoteInterviewNextStep(output.nextStep, current.nextStep)
@@ -186,6 +211,23 @@ export function applyHiringApplicationWorkflowAutomations({
       output.nextStep = recommendationNextStep;
       automationNotes.push("Updated the next step from the interview scorecard recommendation.");
     }
+  }
+
+  if (
+    output.stage === "interview" &&
+    completedScorecard.completedAt &&
+    (!output.followUpAt || isIsoDateInPast(output.followUpAt))
+  ) {
+    output.followUpAt = addDaysToIsoDate(1);
+    automationNotes.push("Set a next-day follow-up reminder after the completed interview.");
+  }
+
+  if (
+    (output.stage === "hired" || output.stage === "rejected") &&
+    output.followUpAt
+  ) {
+    output.followUpAt = null;
+    automationNotes.push("Cleared the open follow-up reminder because the candidate is closed out.");
   }
 
   if (automationNotes.length === 0) {
@@ -258,6 +300,8 @@ export function normalizeHiringApplicationWorkflow(
     ownerEmail: normalizeEmail(parsed.ownerEmail, fallback?.ownerEmail ?? ""),
     recruiterNotes: normalizeLongText(parsed.recruiterNotes, fallback?.recruiterNotes ?? ""),
     nextStep: normalizeShortText(parsed.nextStep, fallback?.nextStep ?? ""),
+    followUpAt:
+      normalizeNullableIsoDate(parsed.followUpAt) ?? fallback?.followUpAt ?? null,
     tags: normalizeTags(parsed.tags, fallback?.tags ?? []),
     interviewPlan: normalizeLongText(parsed.interviewPlan, fallback?.interviewPlan ?? ""),
     interviewKit: normalizeStringList(parsed.interviewKit, fallback?.interviewKit ?? []),
@@ -585,6 +629,29 @@ function normalizeNullableIsoDate(value: unknown) {
   }
 
   return normalizeIsoDate(value);
+}
+
+function addDaysToIsoDate(days: number) {
+  const next = new Date();
+  next.setDate(next.getDate() + days);
+  return next.toISOString();
+}
+
+function isIsoDateInPast(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? false : time < Date.now();
+}
+
+function shouldAlignFollowUpWithInterview(
+  nextFollowUpAt: string | null,
+  previousFollowUpAt: string | null,
+  previousInterviewDate: string | null
+) {
+  if (!nextFollowUpAt) {
+    return true;
+  }
+
+  return nextFollowUpAt === previousFollowUpAt || nextFollowUpAt === previousInterviewDate;
 }
 
 function normalizeIsoDate(value: string) {

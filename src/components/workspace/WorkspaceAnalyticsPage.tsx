@@ -44,9 +44,9 @@ export default function WorkspaceAnalyticsPage({
               helper={`${analytics.interviews.scheduled} scheduled`}
             />
             <AnalyticsHeroCard
-              label="AI screenings"
-              value={String(analytics.screenings.total)}
-              helper={`${analytics.screenings.recent} in the last 7 days`}
+              label="Overdue follow-ups"
+              value={String(analytics.operations.totals.overdue)}
+              helper={`${analytics.operations.totals.interviewsSoon} interview actions soon`}
             />
           </div>
         </div>
@@ -156,6 +156,38 @@ export default function WorkspaceAnalyticsPage({
 
           <Panel title="Submission sources" description="Where recent candidate records are coming from.">
             <BreakdownList items={analytics.sourceBreakdown} tone="neutral" />
+          </Panel>
+
+          <Panel
+            title="Operations queue"
+            description="Where recruiters currently need to follow up, assign owners, or unblock workflow."
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <MetricTile
+                label="Overdue follow-ups"
+                value={String(analytics.operations.totals.overdue)}
+              />
+              <MetricTile
+                label="Due soon"
+                value={String(analytics.operations.totals.upcoming)}
+              />
+              <MetricTile
+                label="Interviews soon"
+                value={String(analytics.operations.totals.interviewsSoon)}
+              />
+              <MetricTile
+                label="Unassigned"
+                value={String(analytics.operations.totals.unassigned)}
+              />
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Link
+                href="/operations"
+                className="rounded-full border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-white dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
+              >
+                Open operations queue
+              </Link>
+            </div>
           </Panel>
 
           <Panel title="Audit trail" description="Recent events recorded across forms, applications, and workflow actions.">

@@ -11,10 +11,12 @@ import {
   updateWorkspaceBillingTransactionByReference,
 } from "@/lib/workspace-billing-store";
 import {
+  BASE_WORKSPACE_BILLING_PLAN_KEY,
   getWorkspaceBillingIntervalOptions,
   getAvailableWorkspaceBillingUpgrades,
   getWorkspaceBillingUpgradePlanIntervalOptions,
   type WorkspaceBillingInterval,
+  type WorkspaceBillingPlanKind,
   type WorkspaceBillingUpgradePlan,
 } from "@/lib/workspace-controls";
 import {
@@ -150,6 +152,9 @@ export async function prepareWorkspaceBillingCheckout(input: {
   await saveWorkspaceControlSettings(summary.workspaceId, {
     billing: {
       ...billing,
+      activePlanKey:
+        billing.status === "active" ? billing.activePlanKey : BASE_WORKSPACE_BILLING_PLAN_KEY,
+      activePlanKind: billing.status === "active" ? billing.activePlanKind : "current",
       customerEmail: payerEmail,
       lastReference: reference,
       status: billing.status === "active" && selectedPlan.kind === "upgrade"
@@ -220,6 +225,10 @@ export async function verifyWorkspaceBillingCheckout(reference: string) {
       ...currentControls.billing,
       amountKobo:
         status === "success" ? selectedPlan.amountKobo : currentControls.billing.amountKobo,
+      activePlanKey:
+        status === "success" ? selectedPlan.key : currentControls.billing.activePlanKey,
+      activePlanKind:
+        status === "success" ? selectedPlan.kind : currentControls.billing.activePlanKind,
       customerEmail: customerEmail || currentControls.billing.customerEmail,
       interval:
         status === "success" ? selectedPlan.interval : currentControls.billing.interval,
@@ -230,15 +239,7 @@ export async function verifyWorkspaceBillingCheckout(reference: string) {
       planName:
         status === "success" ? selectedPlan.planName : currentControls.billing.planName,
       status: nextStatus,
-      upgradePlans:
-        status === "success" && isUpgradeAttempt
-          ? currentControls.billing.upgradePlans.filter(
-              (plan) =>
-                getHighestWorkspaceBillingOptionAmount(
-                  getWorkspaceBillingUpgradePlanIntervalOptions(plan)
-                ) > selectedPlan.amountKobo && plan.key !== selectedPlan.key
-            )
-          : currentControls.billing.upgradePlans,
+      upgradePlans: currentControls.billing.upgradePlans,
     },
   });
 
@@ -258,7 +259,14 @@ function getStoredBillingPlanSelection(
     planName: string;
     upgradePlans?: WorkspaceBillingUpgradePlan[];
   }
-) {
+): {
+  amountKobo: number;
+  interval: WorkspaceBillingInterval;
+  key: string;
+  kind: WorkspaceBillingPlanKind;
+  planCode: string;
+  planName: string;
+} {
   const parsed = (value ?? {}) as {
     metadata?: {
       workspacePlan?: string;
@@ -347,7 +355,7 @@ function resolveWorkspaceBillingCurrentPlan(
   }
 
   return {
-    key: `current-${chosenOption.interval}`,
+    key: BASE_WORKSPACE_BILLING_PLAN_KEY,
     amountKobo: chosenOption.amountKobo,
     interval: chosenOption.interval,
     kind: "current" as const,
@@ -390,10 +398,4 @@ function resolveWorkspaceBillingUpgradePlan(
     planCode: chosenOption.planCode.trim(),
     planName: chosenPlanDefinition.name.trim(),
   };
-}
-
-function getHighestWorkspaceBillingOptionAmount(
-  options: Array<{ amountKobo: number }>
-) {
-  return options.reduce((highest, option) => Math.max(highest, option.amountKobo), 0);
 }

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getWorkspaceMailConnection } from "@/lib/workspace-mail-store";
+import { sendSmtpMail } from "@/lib/smtp-mail";
 
 type SendMailInput = {
   to: string;
@@ -12,7 +13,7 @@ type SendMailInput = {
 export type MailDeliveryResult =
   | {
       status: "sent";
-      provider: "gmail";
+      provider: "gmail" | "smtp";
       source: "workspace" | "global";
       fromEmail: string;
       messageId: string;
@@ -20,11 +21,14 @@ export type MailDeliveryResult =
   | { status: "skipped"; reason: string; source: "workspace" | "global" | "none" };
 
 export type WorkspaceMailConnectionSummary = {
-  provider: "gmail";
+  provider: "gmail" | "smtp" | "none";
   source: "workspace" | "global" | "none";
   fromEmail: string;
   hasWorkspaceConnection: boolean;
   updatedAt: string | null;
+  connectedAccountEmail: string;
+  relayHost: string;
+  senderIdentity: "primary" | "alias" | "smtp" | "unknown" | "none";
 };
 
 const gmailTokenUrl = "https://oauth2.googleapis.com/token";
@@ -46,11 +50,20 @@ export async function getWorkspaceMailConnectionSummary(
 
   if (workspaceConfig) {
     return {
-      provider: "gmail",
+      provider: workspaceConfig.provider,
       source: "workspace",
       fromEmail: workspaceConfig.fromEmail,
       hasWorkspaceConnection: true,
       updatedAt: workspaceConfig.updatedAt,
+      connectedAccountEmail:
+        workspaceConfig.provider === "gmail"
+          ? workspaceConfig.connectedAccountEmail
+          : workspaceConfig.smtpUsername,
+      relayHost: workspaceConfig.provider === "smtp" ? workspaceConfig.smtpHost : "",
+      senderIdentity:
+        workspaceConfig.provider === "gmail"
+          ? workspaceConfig.senderIdentity
+          : "smtp",
     };
   }
 
@@ -61,15 +74,21 @@ export async function getWorkspaceMailConnectionSummary(
       fromEmail: process.env.GOOGLE_MAIL_FROM?.trim().toLowerCase() ?? "",
       hasWorkspaceConnection: false,
       updatedAt: null,
+      connectedAccountEmail: process.env.GOOGLE_MAIL_FROM?.trim().toLowerCase() ?? "",
+      relayHost: "",
+      senderIdentity: "primary",
     };
   }
 
   return {
-    provider: "gmail",
+    provider: "none",
     source: "none",
     fromEmail: "",
     hasWorkspaceConnection: false,
     updatedAt: null,
+    connectedAccountEmail: "",
+    relayHost: "",
+    senderIdentity: "none",
   };
 }
 
@@ -87,6 +106,30 @@ export async function sendWorkspaceMail({
       source: "none",
       reason:
         "No workspace sender or global Google mail fallback is configured, so no email was sent.",
+    };
+  }
+
+  if (config.provider === "smtp") {
+    const delivery = await sendSmtpMail(
+      {
+        host: config.smtpHost,
+        port: config.smtpPort,
+        secure: config.smtpSecure,
+        username: config.smtpUsername,
+        password: config.smtpPassword,
+      },
+      {
+        ...input,
+        from: config.fromEmail,
+      }
+    );
+
+    return {
+      status: "sent",
+      provider: "smtp",
+      source: config.source,
+      fromEmail: config.fromEmail,
+      messageId: delivery.messageId,
     };
   }
 
@@ -344,7 +387,21 @@ async function resolveMailConfig(workspaceId: string) {
   const workspaceConfig = await getWorkspaceMailConnection(workspaceId);
 
   if (workspaceConfig) {
+    if (workspaceConfig.provider === "smtp") {
+      return {
+        provider: "smtp" as const,
+        source: "workspace" as const,
+        fromEmail: workspaceConfig.fromEmail,
+        smtpHost: workspaceConfig.smtpHost,
+        smtpPort: workspaceConfig.smtpPort,
+        smtpSecure: workspaceConfig.smtpSecure,
+        smtpUsername: workspaceConfig.smtpUsername,
+        smtpPassword: workspaceConfig.smtpPassword,
+      };
+    }
+
     return {
+      provider: "gmail" as const,
       source: "workspace" as const,
       fromEmail: workspaceConfig.fromEmail,
       clientId: workspaceConfig.clientId,
@@ -358,6 +415,7 @@ async function resolveMailConfig(workspaceId: string) {
   }
 
   return {
+    provider: "gmail" as const,
     source: "global" as const,
     fromEmail: process.env.GOOGLE_MAIL_FROM?.trim().toLowerCase() ?? "",
     clientId: process.env.GOOGLE_MAIL_CLIENT_ID?.trim() ?? "",

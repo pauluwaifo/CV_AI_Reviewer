@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getHiringFormDetail, listHiringForms } from "@/lib/hiring-funnel-store";
+import { buildWorkspaceOperationsSnapshot } from "@/lib/workspace-operations";
 import { listScreeningSessions } from "@/lib/screening-session-store";
 import { listWorkspaceAuditEvents } from "@/lib/workspace-audit-store";
 
@@ -84,6 +85,15 @@ export async function getWorkspaceAnalyticsSummary(
     })
     .sort((left, right) => right.applicationCount - left.applicationCount || right.averageScore - left.averageScore)
     .slice(0, 5);
+  const operations = buildWorkspaceOperationsSnapshot({
+    applications,
+    formTitles: Object.fromEntries(
+      formDetails
+        .filter(Boolean)
+        .map((form) => [form!.id, form!.title] as const)
+    ),
+    workspaceId,
+  });
 
   return {
     auditEvents,
@@ -98,12 +108,14 @@ export async function getWorkspaceAnalyticsSummary(
       `${highConfidenceCount} screening${highConfidenceCount === 1 ? "" : "s"} came back with high-confidence recommendations.`,
       `${recentSubmissionCount} new submission${recentSubmissionCount === 1 ? "" : "s"} landed in the last 7 days.`,
       `${completedInterviewCount} interview scorecard${completedInterviewCount === 1 ? "" : "s"} have been completed so far.`,
+      `${operations.totals.overdue} follow-up reminder${operations.totals.overdue === 1 ? "" : "s"} are currently overdue.`,
     ],
     interviews: {
       completed: completedInterviewCount,
       recommendationBreakdown: interviewRecommendationBreakdown,
       scheduled: scheduledInterviewCount,
     },
+    operations,
     screenings: {
       total: screenings.length,
       recent: screenings.filter((session) => isWithinDays(session.createdAt, 7)).length,

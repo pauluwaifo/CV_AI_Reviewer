@@ -20,6 +20,12 @@ export const WORKSPACE_FEATURE_MODULES = [
     description: "Track submissions, stage movement, and workspace hiring trends.",
   },
   {
+    key: "operations",
+    label: "Operations",
+    path: "/operations",
+    description: "Work through overdue follow-ups, upcoming interviews, and stale reviews.",
+  },
+  {
     key: "audit_log",
     label: "Audit Log",
     path: "/audit",
@@ -53,6 +59,7 @@ export const WORKSPACE_FEATURE_MODULES = [
 
 export type WorkspaceFeatureKey = (typeof WORKSPACE_FEATURE_MODULES)[number]["key"];
 export type WorkspaceModuleReleaseMode = "open" | "owner_locked" | "requires_billing";
+export type WorkspaceBillingPlanKind = "current" | "upgrade";
 export type WorkspaceBillingStatus =
   | "inactive"
   | "pending_payment"
@@ -77,6 +84,7 @@ export type WorkspaceBillingUpgradePlan = {
 export type WorkspaceModuleAccess = {
   mode: WorkspaceModuleReleaseMode;
   note: string;
+  billingPlanKey: string;
 };
 
 export type WorkspaceBillingSettings = {
@@ -92,6 +100,8 @@ export type WorkspaceBillingSettings = {
   planCode: string;
   amountKobo: number;
   upgradePlans: WorkspaceBillingUpgradePlan[];
+  activePlanKey: string;
+  activePlanKind: WorkspaceBillingPlanKind;
   status: WorkspaceBillingStatus;
   customerEmail: string;
   lastReference: string;
@@ -104,9 +114,12 @@ export type WorkspaceControlSettings = {
   billing: WorkspaceBillingSettings;
 };
 
+export const BASE_WORKSPACE_BILLING_PLAN_KEY = "current-plan";
+
 const DEFAULT_MODULE_ACCESS: WorkspaceModuleAccess = {
   mode: "open",
   note: "",
+  billingPlanKey: BASE_WORKSPACE_BILLING_PLAN_KEY,
 };
 
 export const DEFAULT_WORKSPACE_BILLING_SETTINGS: WorkspaceBillingSettings = {
@@ -122,6 +135,8 @@ export const DEFAULT_WORKSPACE_BILLING_SETTINGS: WorkspaceBillingSettings = {
   planCode: "",
   amountKobo: 0,
   upgradePlans: [],
+  activePlanKey: BASE_WORKSPACE_BILLING_PLAN_KEY,
+  activePlanKind: "current",
   status: "inactive",
   customerEmail: "",
   lastReference: "",
@@ -165,6 +180,10 @@ export function parseWorkspaceControlSettings(
       accumulator[module.key] = {
         mode: normalizeModuleReleaseMode(moduleValue?.mode, defaults.modules[module.key].mode),
         note: normalizeShortText(moduleValue?.note),
+        billingPlanKey: normalizeWorkspaceBillingPlanKey(
+          moduleValue?.billingPlanKey,
+          defaults.modules[module.key].billingPlanKey
+        ),
       };
 
       return accumulator;
@@ -200,10 +219,7 @@ export function isWorkspaceModuleAccessible(
   }
 
   if (moduleAccess.mode === "requires_billing") {
-    return (
-      controls.billing.enabled &&
-      controls.billing.status === "active"
-    );
+    return hasWorkspaceBillingTierAccess(controls, moduleAccess.billingPlanKey);
   }
 
   return false;
@@ -226,8 +242,15 @@ export function getWorkspaceModuleLockedMessage(
   }
 
   if (moduleAccess.mode === "requires_billing") {
+    const targetPlanLabel = getWorkspaceBillingPlanLabel(
+      controls.billing,
+      moduleAccess.billingPlanKey
+    );
+
     return controls.billing.enabled
-      ? `${moduleLabel} unlocks once billing for this workspace is active.`
+      ? moduleAccess.billingPlanKey === BASE_WORKSPACE_BILLING_PLAN_KEY
+        ? `${moduleLabel} unlocks once the base paid workspace plan is active.`
+        : `${moduleLabel} unlocks on the ${targetPlanLabel} tier.`
       : `${moduleLabel} is reserved for paid workspaces once billing is turned on.`;
   }
 
@@ -309,6 +332,80 @@ export function getAvailableWorkspaceBillingUpgrades(settings: WorkspaceBillingS
     );
 }
 
+export function getWorkspaceBillingPlanLabel(
+  settings: WorkspaceBillingSettings,
+  planKey: string
+) {
+  if (!planKey || planKey === BASE_WORKSPACE_BILLING_PLAN_KEY) {
+    return settings.planName || "Base plan";
+  }
+
+  return settings.upgradePlans.find((plan) => plan.key === planKey)?.name || "Upgrade tier";
+}
+
+export function getWorkspaceBillingPlanOrder(
+  settings: WorkspaceBillingSettings,
+  planKey: string
+) {
+  if (!planKey || planKey === BASE_WORKSPACE_BILLING_PLAN_KEY) {
+    return 0;
+  }
+
+  const orderedPlans = [...settings.upgradePlans].sort(
+    (left, right) =>
+      getLowestWorkspaceBillingOptionAmount(getWorkspaceBillingUpgradePlanIntervalOptions(left)) -
+      getLowestWorkspaceBillingOptionAmount(getWorkspaceBillingUpgradePlanIntervalOptions(right))
+  );
+  const index = orderedPlans.findIndex((plan) => plan.key === planKey);
+
+  return index >= 0 ? index + 1 : null;
+}
+
+export function hasWorkspaceBillingTierAccess(
+  controls: WorkspaceControlSettings,
+  requiredPlanKey: string
+) {
+  if (!controls.billing.enabled || controls.billing.status !== "active") {
+    return false;
+  }
+
+  const activePlanKey = normalizeWorkspaceBillingPlanKey(
+    controls.billing.activePlanKey,
+    BASE_WORKSPACE_BILLING_PLAN_KEY
+  );
+  const normalizedRequiredPlanKey = normalizeWorkspaceBillingPlanKey(
+    requiredPlanKey,
+    BASE_WORKSPACE_BILLING_PLAN_KEY
+  );
+  const activeOrder = getWorkspaceBillingPlanOrder(controls.billing, activePlanKey) ?? 0;
+  const requiredOrder =
+    getWorkspaceBillingPlanOrder(controls.billing, normalizedRequiredPlanKey) ?? 0;
+
+  return activeOrder >= requiredOrder;
+}
+
+export function getWorkspaceModulesForBillingPlan(
+  controls: WorkspaceControlSettings,
+  planKey: string
+) {
+  const normalizedPlanKey = normalizeWorkspaceBillingPlanKey(
+    planKey,
+    BASE_WORKSPACE_BILLING_PLAN_KEY
+  );
+
+  return WORKSPACE_FEATURE_MODULES.filter((module) => {
+    const access = controls.modules[module.key];
+
+    return (
+      access.mode === "requires_billing" &&
+      normalizeWorkspaceBillingPlanKey(
+        access.billingPlanKey,
+        BASE_WORKSPACE_BILLING_PLAN_KEY
+      ) === normalizedPlanKey
+    );
+  });
+}
+
 export function getWorkspaceBillingUpgradePlanIntervalOptions(
   plan: WorkspaceBillingUpgradePlan
 ) {
@@ -338,6 +435,8 @@ function parseWorkspaceBillingSettings(
   fallback: WorkspaceBillingSettings
 ): WorkspaceBillingSettings {
   const parsed = (value ?? {}) as Partial<WorkspaceBillingSettings> & {
+    activePlanKey?: unknown;
+    activePlanKind?: unknown;
     monthlyAmountKobo?: unknown;
     monthlyPlanCode?: unknown;
     upgradeAmountKobo?: unknown;
@@ -411,6 +510,11 @@ function parseWorkspaceBillingSettings(
     planCode: normalizeShortText(parsed.planCode),
     amountKobo: normalizeNonNegativeInteger(parsed.amountKobo, fallback.amountKobo),
     upgradePlans: normalizedUpgradePlans,
+    activePlanKey: normalizeWorkspaceBillingPlanKey(parsed.activePlanKey, fallback.activePlanKey),
+    activePlanKind: normalizeWorkspaceBillingPlanKind(
+      parsed.activePlanKind,
+      fallback.activePlanKind
+    ),
     status: normalizeBillingStatus(parsed.status, fallback.status),
     customerEmail: normalizeEmail(parsed.customerEmail),
     lastReference: normalizeShortText(parsed.lastReference),
@@ -425,6 +529,13 @@ function normalizeModuleReleaseMode(
   return value === "owner_locked" || value === "requires_billing" || value === "open"
     ? value
     : fallback;
+}
+
+function normalizeWorkspaceBillingPlanKind(
+  value: unknown,
+  fallback: WorkspaceBillingPlanKind
+): WorkspaceBillingPlanKind {
+  return value === "upgrade" || value === "current" ? value : fallback;
 }
 
 function normalizeBillingStatus(
@@ -521,6 +632,15 @@ function buildWorkspaceBillingUpgradePlanKey(source: string, index: number) {
     .replace(/^-+|-+$/g, "");
 
   return slug ? `${slug}-${index + 1}` : `upgrade-${index + 1}`;
+}
+
+function normalizeWorkspaceBillingPlanKey(value: unknown, fallback: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  return normalized || fallback;
 }
 
 function normalizeShortText(value: unknown, fallback = "") {

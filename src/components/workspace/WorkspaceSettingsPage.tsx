@@ -24,11 +24,23 @@ type WorkspaceMember = {
 };
 
 type WorkspaceMailConnectionSummary = {
-  provider: "gmail";
+  provider: "gmail" | "smtp" | "none";
   source: "workspace" | "global" | "none";
   fromEmail: string;
   hasWorkspaceConnection: boolean;
   updatedAt: string | null;
+  connectedAccountEmail: string;
+  relayHost: string;
+  senderIdentity: "primary" | "alias" | "smtp" | "unknown" | "none";
+};
+
+type WorkspaceSmtpConnectionDraft = {
+  fromEmail: string;
+  host: string;
+  port: string;
+  secure: boolean;
+  username: string;
+  password: string;
 };
 
 type WorkspaceIntegrationEventOption = {
@@ -50,6 +62,14 @@ type WorkspaceIntegrationSettings = {
   workspaceId: string;
 };
 
+type WorkspaceSettingsTab =
+  | "general"
+  | "team"
+  | "integrations"
+  | "security";
+
+type WorkspaceMailSetupMethod = "google" | "smtp";
+
 export default function WorkspaceSettingsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -65,17 +85,25 @@ export default function WorkspaceSettingsPage() {
     buildEmptyIntegrationSettings(settings.workspaceId)
   );
   const [workspaceSenderEmail, setWorkspaceSenderEmail] = useState("");
+  const [smtpConnectionDraft, setSmtpConnectionDraft] = useState<WorkspaceSmtpConnectionDraft>(
+    buildEmptySmtpConnectionDraft()
+  );
   const [newWorkspaceAccessKey, setNewWorkspaceAccessKey] = useState("");
   const [resetAccessKey, setResetAccessKey] = useState("");
   const [deleteWorkspaceConfirmation, setDeleteWorkspaceConfirmation] = useState("");
+  const [activeTab, setActiveTab] = useState<WorkspaceSettingsTab>("general");
+  const [activeMailSetupMethod, setActiveMailSetupMethod] =
+    useState<WorkspaceMailSetupMethod>("google");
   const [isSaving, setIsSaving] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
   const [isLoadingMailConnection, setIsLoadingMailConnection] = useState(true);
   const [isConnectingMailConnection, setIsConnectingMailConnection] = useState(false);
   const [isDisconnectingMailConnection, setIsDisconnectingMailConnection] = useState(false);
+  const [isSavingSmtpConnection, setIsSavingSmtpConnection] = useState(false);
   const [isLoadingIntegrations, setIsLoadingIntegrations] = useState(true);
   const [isResettingKey, setIsResettingKey] = useState(false);
   const [isSavingIntegrations, setIsSavingIntegrations] = useState(false);
+  const [isTestingIntegrations, setIsTestingIntegrations] = useState(false);
   const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
   const [updatingMemberId, setUpdatingMemberId] = useState("");
   const [feedback, setFeedback] = useState<{
@@ -93,10 +121,46 @@ export default function WorkspaceSettingsPage() {
   ].filter(Boolean).length;
   const workspaceProductName = draft.appName.trim() || "your hiring workspace";
   const workspaceOrganizationName = draft.organizationName.trim() || "your company";
+  const settingsTabs: Array<{
+    value: WorkspaceSettingsTab;
+    label: string;
+    helper: string;
+  }> = [
+    {
+      value: "general",
+      label: "General",
+      helper: "Brand, workspace details, and public form styling.",
+    },
+    {
+      value: "team",
+      label: "Team",
+      helper: "Members, invites, and workspace sender connection.",
+    },
+    {
+      value: "integrations",
+      label: "Integrations",
+      helper: "Slack and webhook delivery settings.",
+    },
+    {
+      value: "security",
+      label: "Security",
+      helper: "Shared key resets and workspace deletion.",
+    },
+  ];
+  const activeSettingsTab =
+    settingsTabs.find((tab) => tab.value === activeTab) ?? settingsTabs[0];
 
   useEffect(() => {
     setDraft(settings);
   }, [settings]);
+
+  useEffect(() => {
+    const requestedTab = normalizeWorkspaceSettingsTab(searchParams.get("tab"));
+
+    if (requestedTab) {
+      setActiveTab(requestedTab);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -184,7 +248,16 @@ export default function WorkspaceSettingsPage() {
           cache: "no-store",
         });
         const payload = (await response.json().catch(() => null)) as
-          | { connection?: WorkspaceMailConnectionSummary }
+          | {
+              connection?: WorkspaceMailConnectionSummary;
+              smtpConnection?: {
+                fromEmail: string;
+                host: string;
+                port: number;
+                secure: boolean;
+                username: string;
+              } | null;
+            }
           | null;
 
         if (!isCurrent) {
@@ -193,7 +266,27 @@ export default function WorkspaceSettingsPage() {
 
         setMailConnection(payload?.connection ?? null);
         setWorkspaceSenderEmail(
-          payload?.connection?.source === "workspace" ? payload.connection.fromEmail : ""
+          payload?.connection?.source === "workspace" &&
+            payload.connection.provider === "gmail"
+            ? payload.connection.fromEmail
+            : ""
+        );
+        setSmtpConnectionDraft(
+          payload?.smtpConnection
+            ? {
+                fromEmail: payload.smtpConnection.fromEmail,
+                host: payload.smtpConnection.host,
+                port: String(payload.smtpConnection.port || 587),
+                secure: payload.smtpConnection.secure,
+                username: payload.smtpConnection.username,
+                password: "",
+              }
+            : buildEmptySmtpConnectionDraft()
+        );
+        setActiveMailSetupMethod(
+          payload?.connection?.provider === "smtp" && payload.connection.source === "workspace"
+            ? "smtp"
+            : "google"
         );
       } catch {
         if (!isCurrent) {
@@ -202,6 +295,7 @@ export default function WorkspaceSettingsPage() {
 
         setMailConnection(null);
         setWorkspaceSenderEmail("");
+        setSmtpConnectionDraft(buildEmptySmtpConnectionDraft());
       } finally {
         if (isCurrent) {
           setIsLoadingMailConnection(false);
@@ -232,8 +326,10 @@ export default function WorkspaceSettingsPage() {
           ? "Google inbox connected for this workspace."
           : "I couldn't finish the Google inbox connection."),
     });
-    router.replace("/workspace");
-  }, [isLoadingMailConnection, router, searchParams]);
+    router.replace(
+      activeTab === "general" ? "/workspace" : `/workspace?tab=${activeTab}`
+    );
+  }, [activeTab, isLoadingMailConnection, router, searchParams]);
 
   async function handleSave() {
     if (isSaving) {
@@ -574,6 +670,116 @@ export default function WorkspaceSettingsPage() {
     }
   }
 
+  async function handleSaveSmtpWorkspaceMailConnection() {
+    if (isSavingSmtpConnection) {
+      return;
+    }
+
+    const fromEmail = smtpConnectionDraft.fromEmail.trim().toLowerCase();
+    const host = smtpConnectionDraft.host.trim();
+    const port = Number.parseInt(smtpConnectionDraft.port.trim(), 10);
+    const username = smtpConnectionDraft.username.trim();
+    const password = smtpConnectionDraft.password.trim();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) {
+      setFeedback({
+        tone: "error",
+        message: "Enter a valid sender email for the SMTP connection.",
+      });
+      return;
+    }
+
+    if (!host) {
+      setFeedback({
+        tone: "error",
+        message: "Enter the SMTP host for this sender.",
+      });
+      return;
+    }
+
+    if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+      setFeedback({
+        tone: "error",
+        message: "Enter a valid SMTP port.",
+      });
+      return;
+    }
+
+    if (!username) {
+      setFeedback({
+        tone: "error",
+        message: "Enter the SMTP username for this sender.",
+      });
+      return;
+    }
+
+    if (!password) {
+      setFeedback({
+        tone: "error",
+        message: "Enter the SMTP password or app password for this sender.",
+      });
+      return;
+    }
+
+    setIsSavingSmtpConnection(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/workspace/mail", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "smtp",
+          fromEmail,
+          smtpHost: host,
+          smtpPort: port,
+          smtpSecure: smtpConnectionDraft.secure,
+          smtpUsername: username,
+          smtpPassword: password,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            connection?: WorkspaceMailConnectionSummary;
+            smtpConnection?: {
+              fromEmail: string;
+              host: string;
+              port: number;
+              secure: boolean;
+              username: string;
+            } | null;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok || !payload?.connection) {
+        throw new Error(payload?.error || "I couldn't save that SMTP sender.");
+      }
+
+      setMailConnection(payload.connection);
+      setSmtpConnectionDraft((current) => ({
+        ...current,
+        password: "",
+      }));
+      setFeedback({
+        tone: "success",
+        message: `SMTP sender saved. ${payload.connection.fromEmail} is ready for workspace invites.`,
+      });
+    } catch (mailError) {
+      setFeedback({
+        tone: "error",
+        message:
+          mailError instanceof Error
+            ? mailError.message
+            : "I couldn't save that SMTP sender.",
+      });
+    } finally {
+      setIsSavingSmtpConnection(false);
+    }
+  }
+
   async function handleDisconnectWorkspaceMailConnection() {
     if (isDisconnectingMailConnection || !mailConnection?.hasWorkspaceConnection) {
       return;
@@ -587,7 +793,11 @@ export default function WorkspaceSettingsPage() {
         method: "DELETE",
       });
       const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; connection?: WorkspaceMailConnectionSummary; error?: string }
+        | {
+            ok?: boolean;
+            connection?: WorkspaceMailConnectionSummary;
+            error?: string;
+          }
         | null;
 
       if (!response.ok || !payload?.ok || !payload.connection) {
@@ -596,6 +806,7 @@ export default function WorkspaceSettingsPage() {
 
       setMailConnection(payload.connection);
       setWorkspaceSenderEmail("");
+      setSmtpConnectionDraft(buildEmptySmtpConnectionDraft());
       setFeedback({
         tone: "success",
         message:
@@ -713,6 +924,53 @@ export default function WorkspaceSettingsPage() {
     }
   }
 
+  async function handleTestIntegrations() {
+    if (isTestingIntegrations) {
+      return;
+    }
+
+    setIsTestingIntegrations(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/workspace/integrations/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          enabledEvents: integrationSettings.enabledEvents,
+          slackWebhookUrl: integrationSettings.slackWebhookUrl,
+          webhookSigningSecret: integrationSettings.webhookSigningSecret,
+          webhookUrl: integrationSettings.webhookUrl,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string; settings?: WorkspaceIntegrationSettings; summary?: string }
+        | null;
+
+      if (!response.ok || !payload?.settings) {
+        throw new Error(payload?.error || "I couldn't send a test integration event.");
+      }
+
+      setIntegrationSettings(payload.settings);
+      setFeedback({
+        tone: "success",
+        message: payload.summary || "Test integration event sent.",
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "I couldn't send a test integration event.",
+      });
+    } finally {
+      setIsTestingIntegrations(false);
+    }
+  }
+
   return (
     <div className="w-full space-y-6 py-6 sm:py-8 md:py-10">
       <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
@@ -771,6 +1029,47 @@ export default function WorkspaceSettingsPage() {
         </div>
       </section>
 
+      <section className="rounded-2xl border border-gray-200 bg-white p-3 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
+        <div className="grid gap-3 lg:grid-cols-4">
+          {settingsTabs.map((tab) => {
+            const isActive = activeTab === tab.value;
+
+            return (
+              <button
+                key={tab.value}
+                type="button"
+                onClick={() => setActiveTab(tab.value)}
+                className={`rounded-xl border px-4 py-3 text-left transition ${
+                  isActive
+                    ? "border-brand-200 bg-brand-50 shadow-theme-xs dark:border-brand-500/20 dark:bg-brand-500/10"
+                    : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950/40 dark:hover:border-gray-700 dark:hover:bg-gray-900/70"
+                }`}
+              >
+                <p
+                  className={`text-sm font-semibold ${
+                    isActive
+                      ? "text-brand-700 dark:text-brand-200"
+                      : "text-gray-700 dark:text-gray-200"
+                  }`}
+                >
+                  {tab.label}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-950/40">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
+            {activeSettingsTab.label}
+          </p>
+          <p className="mt-1 text-sm leading-6 text-gray-600 dark:text-gray-300">
+            {activeSettingsTab.helper}
+          </p>
+        </div>
+      </section>
+
+      {activeTab === "general" ? (
+        <>
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
         <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div className="flex items-center justify-between gap-3">
@@ -978,8 +1277,10 @@ export default function WorkspaceSettingsPage() {
           </div>
         </article>
       </section>
+        </>
+      ) : null}
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <section className={activeTab === "team" ? "grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : "hidden"}>
         <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
@@ -1058,8 +1359,7 @@ export default function WorkspaceSettingsPage() {
             </h2>
             <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
               Let this workspace send invites from its own hiring inbox instead of the owner-wide
-              fallback. Use the Gmail account or verified alias that should appear in the
-              candidate&apos;s inbox.
+              fallback. Use either a Google inbox or an SMTP/custom-domain sender.
             </p>
           </div>
 
@@ -1072,11 +1372,7 @@ export default function WorkspaceSettingsPage() {
                 <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
                   {isLoadingMailConnection
                     ? "Loading sender status..."
-                    : mailConnection?.source === "workspace"
-                      ? `${mailConnection.fromEmail} is connected directly to this workspace.`
-                      : mailConnection?.source === "global"
-                        ? `${mailConnection.fromEmail} is the global fallback until this workspace connects its own inbox.`
-                        : "No sender is configured yet. Member invites will still create keys, but the app will not send the email automatically."}
+                    : describeWorkspaceMailConnection(mailConnection)}
                 </p>
               </div>
               <span
@@ -1089,7 +1385,9 @@ export default function WorkspaceSettingsPage() {
                 }`}
               >
                 {mailConnection?.source === "workspace"
-                  ? "Workspace sender active"
+                  ? mailConnection.provider === "smtp"
+                    ? "SMTP sender active"
+                    : "Google sender active"
                   : mailConnection?.source === "global"
                     ? "Using global fallback"
                     : "No sender configured"}
@@ -1102,51 +1400,238 @@ export default function WorkspaceSettingsPage() {
             ) : null}
           </div>
 
-          <Field
-            label="Company sender email"
-            help="Enter the hiring inbox this company wants to send from. After that, Google opens once so the admin can approve it."
-          >
-            <input
-              value={workspaceSenderEmail}
-              onChange={(event) => setWorkspaceSenderEmail(event.target.value)}
-              className={inputClassName}
-              placeholder="jobs@company.com"
-              type="email"
-            />
-          </Field>
+          <div className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setActiveMailSetupMethod("google")}
+                className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                  activeMailSetupMethod === "google"
+                    ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-100"
+                    : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950/50 dark:text-gray-200 dark:hover:border-gray-700"
+                }`}
+              >
+                Google / Workspace
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveMailSetupMethod("smtp")}
+                className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                  activeMailSetupMethod === "smtp"
+                    ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-100"
+                    : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950/50 dark:text-gray-200 dark:hover:border-gray-700"
+                }`}
+              >
+                SMTP / custom domain
+              </button>
+            </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => void handleConnectWorkspaceMailConnection()}
-              disabled={isConnectingMailConnection}
-              className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300"
-            >
-              {isConnectingMailConnection
-                ? "Opening Google..."
-                : mailConnection?.hasWorkspaceConnection
-                  ? "Reconnect Google inbox"
-                  : "Connect Google inbox"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleDisconnectWorkspaceMailConnection()}
-              disabled={isDisconnectingMailConnection || !mailConnection?.hasWorkspaceConnection}
-              className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
-            >
-              {isDisconnectingMailConnection ? "Disconnecting..." : "Disconnect workspace sender"}
-            </button>
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-4 text-sm leading-6 text-gray-600 dark:border-gray-800 dark:bg-gray-950/50 dark:text-gray-300">
+              <p className="font-semibold text-gray-900 dark:text-white">
+                {activeMailSetupMethod === "google"
+                  ? "Connect a Google or Google Workspace inbox"
+                  : "Use any company relay or custom-domain SMTP server"}
+              </p>
+              <p className="mt-2">
+                {activeMailSetupMethod === "google"
+                  ? "Use the exact mailbox candidates should see, or a verified Google alias. The app checks that the connected Google account is actually allowed to send as that address."
+                  : "Use this when the sender lives on Microsoft 365, Zoho, cPanel, Resend SMTP, or any other custom-domain relay instead of Google."}
+              </p>
+            </div>
           </div>
 
-          <div className="rounded-lg border border-dashed border-gray-300 px-4 py-4 text-sm leading-6 text-gray-600 dark:border-gray-700 dark:text-gray-300">
-            Non-technical admins only need the company email here. After they click connect, Google
-            handles the sign-in and approval flow, and the workspace starts sending invites from
-            that inbox instead of the owner-wide mailbox.
-          </div>
+          {activeMailSetupMethod === "google" ? (
+            <>
+              <Field
+                label="Company sender email"
+                help="Enter the exact Google mailbox or verified alias candidates should see."
+              >
+                <input
+                  value={workspaceSenderEmail}
+                  onChange={(event) => setWorkspaceSenderEmail(event.target.value)}
+                  className={inputClassName}
+                  placeholder="jobs@company.com"
+                  type="email"
+                />
+              </Field>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => void handleConnectWorkspaceMailConnection()}
+                  disabled={isConnectingMailConnection}
+                  className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300"
+                >
+                  {isConnectingMailConnection
+                    ? "Opening Google..."
+                    : mailConnection?.source === "workspace" && mailConnection.provider === "gmail"
+                      ? "Reconnect Google / Workspace"
+                      : "Connect Google / Workspace"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDisconnectWorkspaceMailConnection()}
+                  disabled={isDisconnectingMailConnection || !mailConnection?.hasWorkspaceConnection}
+                  className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
+                >
+                  {isDisconnectingMailConnection
+                    ? "Disconnecting..."
+                    : "Disconnect workspace sender"}
+                </button>
+              </div>
+
+              <div className="rounded-lg border border-dashed border-gray-300 px-4 py-4 text-sm leading-6 text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                {mailConnection?.source === "workspace" && mailConnection.provider === "gmail"
+                  ? describeGoogleWorkspaceSenderDetails(mailConnection)
+                  : "Non-technical admins only need the sender email here. Google opens once for approval, then the workspace sends invites from that inbox."}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Field
+                  label="Sender email"
+                  help="This is the address candidates and teammates should see in the From line."
+                >
+                  <input
+                    value={smtpConnectionDraft.fromEmail}
+                    onChange={(event) =>
+                      setSmtpConnectionDraft((current) => ({
+                        ...current,
+                        fromEmail: event.target.value,
+                      }))
+                    }
+                    className={inputClassName}
+                    placeholder="jobs@company.com"
+                    type="email"
+                  />
+                </Field>
+                <Field
+                  label="SMTP host"
+                  help="Example: smtp.office365.com, smtp.zoho.com, mail.yourdomain.com."
+                >
+                  <input
+                    value={smtpConnectionDraft.host}
+                    onChange={(event) =>
+                      setSmtpConnectionDraft((current) => ({
+                        ...current,
+                        host: event.target.value,
+                      }))
+                    }
+                    className={inputClassName}
+                    placeholder="smtp.yourdomain.com"
+                    type="text"
+                  />
+                </Field>
+                <Field
+                  label="SMTP port"
+                  help="Use 465 for direct TLS or 587 for STARTTLS on most providers."
+                >
+                  <input
+                    value={smtpConnectionDraft.port}
+                    onChange={(event) =>
+                      setSmtpConnectionDraft((current) => ({
+                        ...current,
+                        port: event.target.value,
+                      }))
+                    }
+                    className={inputClassName}
+                    placeholder="587"
+                    inputMode="numeric"
+                    type="text"
+                  />
+                </Field>
+                <Field
+                  label="SMTP username"
+                  help="Usually the mailbox login or API username for this relay."
+                >
+                  <input
+                    value={smtpConnectionDraft.username}
+                    onChange={(event) =>
+                      setSmtpConnectionDraft((current) => ({
+                        ...current,
+                        username: event.target.value,
+                      }))
+                    }
+                    className={inputClassName}
+                    placeholder="jobs@company.com"
+                    type="text"
+                  />
+                </Field>
+              </div>
+
+              <Field
+                label="SMTP password"
+                help="Use the mailbox password or the provider's app password."
+              >
+                <input
+                  value={smtpConnectionDraft.password}
+                  onChange={(event) =>
+                    setSmtpConnectionDraft((current) => ({
+                      ...current,
+                      password: event.target.value,
+                    }))
+                  }
+                  className={inputClassName}
+                  placeholder="Enter the SMTP password"
+                  type="password"
+                />
+              </Field>
+
+              <label className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-950/50 dark:text-gray-200">
+                <input
+                  checked={smtpConnectionDraft.secure}
+                  onChange={(event) =>
+                    setSmtpConnectionDraft((current) => ({
+                      ...current,
+                      secure: event.target.checked,
+                    }))
+                  }
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-950"
+                  type="checkbox"
+                />
+                <span>
+                  <span className="block font-medium text-gray-900 dark:text-white">
+                    Connect with TLS from the start
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-gray-400">
+                    Turn this on for providers that use port 465. Leave it off for port 587 so the
+                    app can upgrade with STARTTLS.
+                  </span>
+                </span>
+              </label>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveSmtpWorkspaceMailConnection()}
+                  disabled={isSavingSmtpConnection}
+                  className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300"
+                >
+                  {isSavingSmtpConnection ? "Saving SMTP sender..." : "Save SMTP sender"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDisconnectWorkspaceMailConnection()}
+                  disabled={isDisconnectingMailConnection || !mailConnection?.hasWorkspaceConnection}
+                  className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
+                >
+                  {isDisconnectingMailConnection
+                    ? "Disconnecting..."
+                    : "Disconnect workspace sender"}
+                </button>
+              </div>
+
+              <div className="rounded-lg border border-dashed border-gray-300 px-4 py-4 text-sm leading-6 text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                SMTP is the right path when this sender is not hosted by Google. Save the relay
+                details here and the workspace will send invites from that custom-domain inbox.
+              </div>
+            </>
+          )}
         </article>
       </section>
 
-      <section>
+      <section className={activeTab === "integrations" ? "" : "hidden"}>
         <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
@@ -1321,21 +1806,35 @@ export default function WorkspaceSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => void handleSaveIntegrations()}
-                  disabled={isSavingIntegrations}
-                  className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-5 py-3 text-sm font-medium text-white shadow-theme-xs transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300 dark:disabled:bg-brand-500/50"
-                >
-                  {isSavingIntegrations ? "Saving integrations..." : "Save integration settings"}
-                </button>
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={() => void handleTestIntegrations()}
+                    disabled={
+                      isTestingIntegrations ||
+                      (!integrationSettings.webhookUrl.trim() &&
+                        !integrationSettings.slackWebhookUrl.trim())
+                    }
+                    className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-5 py-3 text-sm font-medium text-gray-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-white/5"
+                  >
+                    {isTestingIntegrations ? "Sending test..." : "Send test event"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveIntegrations()}
+                    disabled={isSavingIntegrations}
+                    className="inline-flex items-center justify-center rounded-lg bg-brand-500 px-5 py-3 text-sm font-medium text-white shadow-theme-xs transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-brand-300 dark:disabled:bg-brand-500/50"
+                  >
+                    {isSavingIntegrations ? "Saving integrations..." : "Save integration settings"}
+                  </button>
+                </div>
               </div>
             </>
           )}
         </article>
       </section>
 
-      <section>
+      <section className={activeTab === "security" ? "" : "hidden"}>
         <article className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
@@ -1447,7 +1946,7 @@ export default function WorkspaceSettingsPage() {
         </div>
       ) : null}
 
-      <section>
+      <section className={activeTab === "general" ? "" : "hidden"}>
         <PreviewCard
           eyebrow="Public form preview"
           title={`${draft.organizationName} application form`}
@@ -1466,7 +1965,7 @@ export default function WorkspaceSettingsPage() {
         />
       </section>
 
-      <section className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between">
+      <section className={activeTab === "general" ? "flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between" : "hidden"}>
         <div className="space-y-1">
           <p className="text-sm font-semibold text-gray-900 dark:text-white">
             Save workspace settings
@@ -1738,6 +2237,53 @@ function PreviewCard({
 const inputClassName =
   "w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800 outline-hidden transition placeholder:text-gray-400 focus:border-brand-300 focus:ring-4 focus:ring-brand-500/10 dark:border-gray-800 dark:bg-gray-950 dark:text-white/90 dark:placeholder:text-gray-500";
 
+function buildEmptySmtpConnectionDraft(): WorkspaceSmtpConnectionDraft {
+  return {
+    fromEmail: "",
+    host: "",
+    port: "587",
+    secure: false,
+    username: "",
+    password: "",
+  };
+}
+
+function describeWorkspaceMailConnection(
+  connection: WorkspaceMailConnectionSummary | null
+) {
+  if (!connection || connection.source === "none") {
+    return "No sender is configured yet. Member invites will still create keys, but the app will not send the email automatically.";
+  }
+
+  if (connection.source === "global") {
+    return `${connection.fromEmail} is the global fallback until this workspace connects its own inbox.`;
+  }
+
+  if (connection.provider === "smtp") {
+    return `${connection.fromEmail} is connected through the ${connection.relayHost} SMTP relay for this workspace.`;
+  }
+
+  if (connection.senderIdentity === "alias") {
+    return `${connection.fromEmail} is verified as a Google alias on ${connection.connectedAccountEmail}.`;
+  }
+
+  return `${connection.fromEmail} is connected directly to this workspace through Google.`;
+}
+
+function describeGoogleWorkspaceSenderDetails(
+  connection: WorkspaceMailConnectionSummary
+) {
+  if (connection.senderIdentity === "alias") {
+    return `Connected account: ${connection.connectedAccountEmail}. Google confirmed that ${connection.fromEmail} is a verified Send mail as alias on that inbox.`;
+  }
+
+  if (connection.connectedAccountEmail) {
+    return `Connected account: ${connection.connectedAccountEmail}. This workspace sends directly from that Google mailbox.`;
+  }
+
+  return "This workspace sends directly from the connected Google inbox.";
+}
+
 function createSuggestedWorkspaceAccessKey() {
   if (typeof globalThis.crypto !== "undefined") {
     const bytes = new Uint8Array(8);
@@ -1777,6 +2323,21 @@ function formatDate(value: string) {
 
 function getColorInputValue(value: string) {
   return /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#0f766e";
+}
+
+function normalizeWorkspaceSettingsTab(
+  value: string | null
+): WorkspaceSettingsTab | null {
+  if (
+    value === "general" ||
+    value === "team" ||
+    value === "integrations" ||
+    value === "security"
+  ) {
+    return value;
+  }
+
+  return null;
 }
 
 function buildEmptyIntegrationSettings(workspaceId: string): WorkspaceIntegrationSettings {

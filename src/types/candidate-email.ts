@@ -5,7 +5,7 @@ export type CandidateEmailKind = "rejection" | "follow_up";
 export type CandidateEmailStatus = "draft" | "pending_approval" | "sent" | "cancelled";
 export type CandidateEmailApprovalChannel = "web" | "email";
 export type CandidateEmailDeliverySource = "workspace" | "global" | "none";
-export type CandidateEmailDeliveryProvider = "gmail";
+export type CandidateEmailDeliveryProvider = "gmail" | "smtp";
 
 export interface CandidateEmailDraftRecord {
   id: string;
