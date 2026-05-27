@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
+  isWorkspaceDemoSession,
   isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
@@ -18,6 +19,7 @@ import {
 } from "@/lib/mail-service";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
+import { createWorkspaceDemoRestrictedResponse } from "@/lib/workspace-demo";
 import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
 
@@ -49,6 +51,12 @@ export async function POST(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Member invites are disabled in the one-time demo."
+    );
   }
 
   try {
@@ -150,6 +158,12 @@ export async function PATCH(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Member access changes are disabled in the one-time demo."
+    );
   }
 
   try {

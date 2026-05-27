@@ -7,21 +7,14 @@ import WorkspaceAssistantEntry from "@/components/workspace/WorkspaceAssistantEn
 import { useSidebar } from "@/context/SidebarContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { isWorkspaceModuleAccessible } from "@/lib/workspace-controls";
+import type { WorkspaceSession } from "@/types/workspace-session";
 import AppHeader from "@/layout/AppHeader";
 import AppSidebar from "@/layout/AppSidebar";
 import Backdrop from "@/layout/Backdrop";
 
 type DashboardShellProps = {
   children: ReactNode;
-  session: {
-    workspaceId: string;
-    expiresAt: string;
-    issuedAt: string;
-    role: "admin" | "member";
-    principalType: "shared" | "member";
-    email: string;
-    memberId: string | null;
-  } | null;
+  session: WorkspaceSession | null;
 };
 
 export default function DashboardShell({ children, session }: DashboardShellProps) {

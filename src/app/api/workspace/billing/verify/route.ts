@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
+  isWorkspaceDemoSession,
   isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
@@ -12,6 +13,7 @@ import {
 } from "@/lib/workspace-billing";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
+import { createWorkspaceDemoRestrictedResponse } from "@/lib/workspace-demo";
 import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 
 export const runtime = "nodejs";
@@ -26,6 +28,12 @@ export async function POST(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Billing verification is disabled in the one-time demo."
+    );
   }
 
   try {

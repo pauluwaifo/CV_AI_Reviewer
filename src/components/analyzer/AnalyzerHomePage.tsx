@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { useWorkspace } from "@/context/WorkspaceContext";
@@ -71,11 +72,21 @@ const sparkles = [
 export default function AnalyzerHomePage({
   isAuthenticated = false,
   canManageWorkspace = false,
+  canStartDemo = true,
+  hasUsedDemo = false,
+  isDemoSession = false,
 }: {
   isAuthenticated?: boolean;
   canManageWorkspace?: boolean;
+  canStartDemo?: boolean;
+  hasUsedDemo?: boolean;
+  isDemoSession?: boolean;
 }) {
+  const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isStartingDemo, setIsStartingDemo] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
+  const [demoUsed, setDemoUsed] = useState(hasUsedDemo);
   const { settings } = useWorkspace();
   const theme = buildPublicFormTheme(settings.dashboardAccent);
   const accentRgb = toRgb(settings.dashboardAccent);
@@ -91,6 +102,15 @@ export default function AnalyzerHomePage({
       ? "Workspace Settings"
       : "Open Pipeline"
     : "Sign In";
+  const demoState = isDemoSession
+    ? "active"
+    : isAuthenticated
+      ? "hidden"
+      : demoUsed
+        ? "used"
+        : canStartDemo
+          ? "available"
+          : "used";
   const navItems = [
     { label: "About Us", href: "#about" },
     { label: "Our Vision", href: "#vision" },
@@ -98,6 +118,44 @@ export default function AnalyzerHomePage({
     { label: "Workflow", href: "#workflow" },
     { label: "Contacts", href: "#contact" },
   ];
+
+  async function handleStartDemo() {
+    if (isStartingDemo || demoState !== "available") {
+      return;
+    }
+
+    setIsStartingDemo(true);
+    setDemoError(null);
+
+    try {
+      const response = await fetch("/api/demo/session", {
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            nextPath?: string;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "I couldn't open the demo right now.");
+      }
+
+      router.push(payload?.nextPath || "/pipeline");
+      router.refresh();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "I couldn't open the demo right now.";
+      setDemoError(message);
+
+      if (message.toLowerCase().includes("already used")) {
+        setDemoUsed(true);
+      }
+    } finally {
+      setIsStartingDemo(false);
+    }
+  }
 
   return (
     <div
@@ -168,6 +226,21 @@ export default function AnalyzerHomePage({
             >
               {isAuthenticated ? "Upload" : "Create Workspace"}
             </Link>
+            {demoState === "available" ? (
+              <button
+                type="button"
+                onClick={() => void handleStartDemo()}
+                disabled={isStartingDemo}
+                className="inline-flex items-center justify-center rounded-lg border border-white/12 px-4 py-2.5 text-sm font-medium text-white/84 transition hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isStartingDemo ? "Starting demo..." : "View Demo"}
+              </button>
+            ) : null}
+            {demoState === "used" ? (
+              <span className="inline-flex items-center rounded-lg border border-white/10 px-4 py-2.5 text-sm font-medium text-white/46">
+                Demo Used
+              </span>
+            ) : null}
             <Link
               href={isAuthenticated ? "/pipeline" : "/signin"}
               className="inline-flex items-center justify-center rounded-lg border px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/8"
@@ -269,6 +342,19 @@ export default function AnalyzerHomePage({
           >
             {secondaryLabel}
           </Link>
+          {demoState === "available" ? (
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                void handleStartDemo();
+              }}
+              disabled={isStartingDemo}
+              className="inline-flex w-full items-center justify-center rounded-2xl border border-white/12 px-5 py-3.5 text-sm font-medium text-white/84 transition hover:bg-white/6 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isStartingDemo ? "Starting demo..." : "View Demo"}
+            </button>
+          ) : null}
         </div>
       </aside>
 
@@ -314,7 +400,41 @@ export default function AnalyzerHomePage({
                 >
                   {secondaryLabel}
                 </Link>
+                {demoState === "available" ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleStartDemo()}
+                    disabled={isStartingDemo}
+                    className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-white/12 px-6 py-4 text-base font-medium text-white/84 transition hover:bg-white/6 hover:text-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-7"
+                  >
+                    {isStartingDemo ? "Starting demo..." : "View Demo"}
+                  </button>
+                ) : null}
+                {demoState === "active" ? (
+                  <Link
+                    href="/pipeline"
+                    className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-white/12 px-6 py-4 text-base font-medium text-white/84 transition hover:bg-white/6 hover:text-white sm:px-7"
+                  >
+                    Resume Demo
+                  </Link>
+                ) : null}
+                {demoState === "used" ? (
+                  <span className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-white/12 px-6 py-4 text-base font-medium text-white/48 sm:px-7">
+                    Demo Already Used
+                  </span>
+                ) : null}
               </div>
+
+              {!isAuthenticated ? (
+                <div className="mx-auto mt-4 max-w-3xl space-y-2 text-center">
+                  <p className="text-sm text-white/58">
+                    One browser. One 30-minute guided trial. No login or signup required.
+                  </p>
+                  {demoError ? (
+                    <p className="text-sm text-rose-200">{demoError}</p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             <div className="relative mt-8 h-16 overflow-hidden sm:mt-24 sm:h-72 lg:h-80">

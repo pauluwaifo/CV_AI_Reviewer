@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { isWorkspaceModuleAccessible } from "@/lib/workspace-controls";
+import type { WorkspaceSession } from "@/types/workspace-session";
 import { useSidebar } from "../context/SidebarContext";
 import {
   BoltIcon,
@@ -22,9 +23,7 @@ import {
 export default function AppSidebar({
   session,
 }: {
-  session: {
-    role: "admin" | "member";
-  } | null;
+  session: Pick<WorkspaceSession, "principalType" | "role"> | null;
 }) {
   const { controls, settings } = useWorkspace();
   const pathname = usePathname();
@@ -191,12 +190,14 @@ export default function AppSidebar({
         {showFull ? (
           <div className="rounded-lg border border-brand-100 bg-brand-50 p-4 dark:border-brand-500/20 dark:bg-brand-500/10">
             <p className="text-sm font-semibold text-brand-900 dark:text-brand-100">
-              Workspace dashboard
+              {session?.principalType === "demo" ? "One-time demo workspace" : "Workspace dashboard"}
             </p>
             <p className="mt-2 text-xs leading-5 text-brand-700 dark:text-brand-200">
-              {session?.role === "admin"
-                ? "Screen candidates, manage forms, review results, and control workspace access from one admin area."
-                : "Screen candidates, manage forms, and review results from one secure workspace area."}
+              {session?.principalType === "demo"
+                ? "This isolated demo is safe to explore, but live email delivery, integrations, and real billing actions stay disabled."
+                : session?.role === "admin"
+                  ? "Screen candidates, manage forms, review results, and control workspace access from one admin area."
+                  : "Screen candidates, manage forms, and review results from one secure workspace area."}
             </p>
           </div>
         ) : null}

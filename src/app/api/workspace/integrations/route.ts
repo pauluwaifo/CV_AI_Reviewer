@@ -3,10 +3,12 @@ import { NextResponse } from "next/server";
 import {
   createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
+  isWorkspaceDemoSession,
   isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
+import { createWorkspaceDemoRestrictedResponse } from "@/lib/workspace-demo";
 import {
   getWorkspaceIntegrationSettings,
   saveWorkspaceIntegrationSettings,
@@ -45,6 +47,12 @@ export async function PUT(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Saving external integration destinations is disabled in the one-time demo."
+    );
   }
 
   try {

@@ -98,7 +98,10 @@ export async function createWorkspaceSession(
     WorkspaceAuthenticationResult,
     "workspaceId" | "role" | "principalType" | "email" | "memberId"
   >,
-  keepSignedIn: boolean
+  keepSignedIn: boolean,
+  options?: {
+    maxAgeSeconds?: number;
+  }
 ) {
   const normalizedWorkspaceId = normalizeWorkspaceIdInput(auth.workspaceId);
 
@@ -106,9 +109,12 @@ export async function createWorkspaceSession(
     throw new Error("A valid workspace ID is required to create a session.");
   }
   const now = Math.floor(Date.now() / 1000);
-  const maxAgeSeconds = keepSignedIn
-    ? EXTENDED_SESSION_MAX_AGE_SECONDS
-    : DEFAULT_SESSION_MAX_AGE_SECONDS;
+  const maxAgeSeconds =
+    options?.maxAgeSeconds && Number.isFinite(options.maxAgeSeconds)
+      ? Math.max(60, Math.floor(options.maxAgeSeconds))
+      : keepSignedIn
+        ? EXTENDED_SESSION_MAX_AGE_SECONDS
+        : DEFAULT_SESSION_MAX_AGE_SECONDS;
   const token = `ws_${randomBytes(32).toString("base64url")}`;
   const issuedAt = new Date(now * 1000).toISOString();
   const expiresAt = new Date((now + maxAgeSeconds) * 1000).toISOString();
@@ -186,6 +192,12 @@ export function isWorkspaceAdminSession(
   session: Pick<WorkspaceSession, "role"> | null | undefined
 ) {
   return workspaceSessionHasRole(session, "admin");
+}
+
+export function isWorkspaceDemoSession(
+  session: Pick<WorkspaceSession, "principalType"> | null | undefined
+) {
+  return session?.principalType === "demo";
 }
 
 export function applyWorkspaceSessionCookie(
@@ -315,7 +327,15 @@ function normalizeWorkspaceRole(value: unknown): WorkspaceSessionRole {
 function normalizeWorkspacePrincipalType(
   value: unknown
 ): WorkspaceSessionPrincipalType {
-  return value === "member" ? "member" : "shared";
+  if (value === "member") {
+    return "member";
+  }
+
+  if (value === "demo") {
+    return "demo";
+  }
+
+  return "shared";
 }
 
 function normalizeWorkspaceSessionEmail(value: unknown) {

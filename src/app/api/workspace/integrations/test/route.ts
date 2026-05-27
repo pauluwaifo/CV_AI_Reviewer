@@ -3,11 +3,13 @@ import { NextResponse } from "next/server";
 import {
   createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
+  isWorkspaceDemoSession,
   isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
 import { emitWorkspaceIntegrationEvent } from "@/lib/workspace-integrations";
+import { createWorkspaceDemoRestrictedResponse } from "@/lib/workspace-demo";
 import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 import {
   getWorkspaceIntegrationSettings,
@@ -27,6 +29,12 @@ export async function POST(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Integration test deliveries are disabled in the one-time demo."
+    );
   }
 
   const payload = (await request.json().catch(() => ({}))) as Partial<{

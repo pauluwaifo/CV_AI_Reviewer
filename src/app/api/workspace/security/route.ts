@@ -5,11 +5,13 @@ import { generateWorkspaceAccessKey } from "@/lib/workspace-access-key";
 import {
   createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
+  isWorkspaceDemoSession,
   hashWorkspaceAccessKey,
   isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
 import { createWorkspaceAuditEvent } from "@/lib/workspace-audit-store";
+import { createWorkspaceDemoRestrictedResponse } from "@/lib/workspace-demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +25,12 @@ export async function POST(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Access key resets are disabled in the one-time demo."
+    );
   }
 
   try {

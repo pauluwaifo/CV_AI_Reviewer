@@ -1,5 +1,5 @@
 export type WorkspaceSessionRole = "admin" | "member";
-export type WorkspaceSessionPrincipalType = "shared" | "member";
+export type WorkspaceSessionPrincipalType = "shared" | "member" | "demo";
 
 export type WorkspaceSession = {
   workspaceId: string;

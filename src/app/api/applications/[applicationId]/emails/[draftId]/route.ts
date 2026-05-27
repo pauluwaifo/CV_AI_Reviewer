@@ -18,6 +18,10 @@ import {
 import { requireWorkspaceFeatureApiAccess } from "@/lib/workspace-module-access";
 import { appendWorkspaceQuery } from "@/lib/workspace-settings";
 import { getWorkspaceSettings } from "@/lib/workspace-settings-store";
+import {
+  createWorkspaceDemoRestrictedResponse,
+  shouldBlockWorkspaceDemoAction,
+} from "@/lib/workspace-demo";
 import type { CandidateEmailDraftRecord } from "@/types/candidate-email";
 
 export const runtime = "nodejs";
@@ -114,6 +118,12 @@ export async function PATCH(
     }
 
     if (action === "request_approval") {
+      if (shouldBlockWorkspaceDemoAction(access.session)) {
+        return createWorkspaceDemoRestrictedResponse(
+          "Approval emails are disabled in the one-time demo."
+        );
+      }
+
       const accessRecord = await getWorkspaceAccessRecord(access.session.workspaceId);
       const adminContactEmail = accessRecord?.contactEmail?.trim().toLowerCase() ?? "";
       const approvalToken = `approve_${randomBytes(24).toString("base64url")}`;
@@ -202,6 +212,12 @@ export async function PATCH(
     }
 
     if (action === "approve_send") {
+      if (shouldBlockWorkspaceDemoAction(access.session)) {
+        return createWorkspaceDemoRestrictedResponse(
+          "Live candidate email sending is disabled in the one-time demo."
+        );
+      }
+
       if (!isWorkspaceAdminSession(access.session)) {
         return createWorkspaceForbiddenResponse();
       }

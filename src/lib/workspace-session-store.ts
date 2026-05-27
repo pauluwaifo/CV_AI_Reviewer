@@ -119,7 +119,12 @@ function normalizeSessionRecord(record: WorkspaceSessionRecord): WorkspaceSessio
     tokenHash: record.tokenHash.trim(),
     workspaceId: sanitizeWorkspaceId(record.workspaceId),
     role: record.role === "member" ? "member" : "admin",
-    principalType: record.principalType === "member" ? "member" : "shared",
+    principalType:
+      record.principalType === "member"
+        ? "member"
+        : record.principalType === "demo"
+          ? "demo"
+          : "shared",
     email: record.email.trim().toLowerCase(),
     memberId: record.memberId?.trim() ? record.memberId.trim() : null,
     issuedAt: toIsoString(record.issuedAt),
@@ -133,7 +138,12 @@ function toWorkspaceSessionRecord(row: WorkspaceSessionRow): WorkspaceSessionRec
     tokenHash: row.token_hash,
     workspaceId: sanitizeWorkspaceId(row.workspace_id),
     role: row.role === "member" ? "member" : "admin",
-    principalType: row.principal_type === "member" ? "member" : "shared",
+    principalType:
+      row.principal_type === "member"
+        ? "member"
+        : row.principal_type === "demo"
+          ? "demo"
+          : "shared",
     email: row.email || "",
     memberId: row.member_id || null,
     issuedAt: toIsoString(row.issued_at),

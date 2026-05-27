@@ -124,7 +124,12 @@ function normalizeRecord(value: unknown): WorkspaceSessionRecord | null {
     tokenHash: parsed.tokenHash.trim(),
     workspaceId: sanitizeWorkspaceId(parsed.workspaceId),
     role: parsed.role === "member" ? "member" : "admin",
-    principalType: parsed.principalType === "member" ? "member" : "shared",
+    principalType:
+      parsed.principalType === "member"
+        ? "member"
+        : parsed.principalType === "demo"
+          ? "demo"
+          : "shared",
     email: typeof parsed.email === "string" ? parsed.email.trim().toLowerCase() : "",
     memberId:
       typeof parsed.memberId === "string" && parsed.memberId.trim()

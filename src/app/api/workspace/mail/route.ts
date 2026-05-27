@@ -3,10 +3,12 @@ import { NextResponse } from "next/server";
 import {
   createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
+  isWorkspaceDemoSession,
   isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
 import { getWorkspaceMailConnectionSummary } from "@/lib/mail-service";
+import { createWorkspaceDemoRestrictedResponse } from "@/lib/workspace-demo";
 import {
   deleteWorkspaceMailConnection,
   getWorkspaceMailConnection,
@@ -56,6 +58,12 @@ export async function PUT(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Connecting a live sender is disabled in the one-time demo."
+    );
   }
 
   try {
@@ -226,6 +234,12 @@ export async function DELETE(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Disconnecting or changing a live sender is disabled in the one-time demo."
+    );
   }
 
   try {

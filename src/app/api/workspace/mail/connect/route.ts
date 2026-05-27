@@ -5,9 +5,11 @@ import { NextResponse } from "next/server";
 import {
   createWorkspaceForbiddenResponse,
   createWorkspaceUnauthorizedResponse,
+  isWorkspaceDemoSession,
   isWorkspaceAdminSession,
   requireWorkspaceApiSession,
 } from "@/lib/workspace-auth";
+import { createWorkspaceDemoRestrictedResponse } from "@/lib/workspace-demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +29,12 @@ export async function POST(request: Request) {
 
   if (!isWorkspaceAdminSession(session)) {
     return createWorkspaceForbiddenResponse();
+  }
+
+  if (isWorkspaceDemoSession(session)) {
+    return createWorkspaceDemoRestrictedResponse(
+      "Google inbox connection is disabled in the one-time demo."
+    );
   }
 
   const clientId = process.env.GOOGLE_MAIL_CLIENT_ID?.trim() ?? "";
