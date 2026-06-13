@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     }
 
     const jdAttachment = jdFile instanceof File
-      ? await buildJdAttachment(jdFile, session.workspaceId)
+      ? await buildJdAttachment(jdFile, access.session.workspaceId)
       : jdText
         ? buildTextJdAttachment(jdText, jdTextFileName)
         : null;
