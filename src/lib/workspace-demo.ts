@@ -142,6 +142,7 @@ async function seedWorkspaceDemoWorkspace(workspaceId: string) {
       enabled: true,
       provider: "paystack",
       currency: "NGN",
+      aiCreditsRemaining: 0,
       monthlyAmountKobo: 145_000,
       monthlyPlanCode: "demo-growth-monthly",
       yearlyAmountKobo: 1_450_000,

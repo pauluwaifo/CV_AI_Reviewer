@@ -41,7 +41,6 @@ export async function POST(request: Request) {
       },
       messages,
       provider: "auto",
-      workspaceId: session.workspaceId,
     });
 
     return NextResponse.json(response);
