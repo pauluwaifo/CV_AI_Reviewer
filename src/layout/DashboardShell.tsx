@@ -27,6 +27,7 @@ export default function DashboardShell({ children, session }: DashboardShellProp
     pathname.startsWith("/pipeline") ||
     pathname.startsWith("/candidate-mail") ||
     pathname.startsWith("/billing") ||
+    pathname.startsWith("/personality") ||
     pathname.startsWith("/analytics") ||
     pathname.startsWith("/operations") ||
     pathname.startsWith("/audit") ||

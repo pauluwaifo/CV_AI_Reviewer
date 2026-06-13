@@ -44,6 +44,8 @@ import type {
   UploadSourceKind,
   ProviderFallbackMode,
 } from "@/types/document-intelligence";
+import { buildPpapLocalNarratives, buildPpapTendencyResponsePattern } from "@/lib/ppap-assessment";
+import type { PpapAssessmentScores, PpapCandidateIntake } from "@/types/ppap";
 import { maxUploadSizeBytes } from "@/types/document-intelligence";
 
 const DIRECT_PROMPT_CHAR_LIMIT = 12_000;
@@ -692,6 +694,56 @@ export async function generateCandidateEmailDraft({
   } catch (error) {
     return {
       ...localDraft,
+      provider: "local",
+      providerWarnings: extractProviderWarnings(error),
+    };
+  }
+}
+
+export async function generatePpapAssessmentAnalysis({
+  intake,
+  scores,
+  provider = "auto",
+}: {
+  intake: PpapCandidateIntake;
+  scores: PpapAssessmentScores;
+  provider?: AnalysisProvider;
+}): Promise<{
+  adminReport: string;
+  candidateSummary: string;
+  provider: ResolvedProvider;
+  providerDetail?: string;
+  providerWarnings: string[];
+}> {
+  const localNarratives = buildPpapLocalNarratives({ intake, scores });
+  const responsePattern = buildPpapTendencyResponsePattern(scores.questionScores);
+  const prompt = buildPpapAnalysisPrompt({ intake, scores, responsePattern });
+
+  try {
+    const providerResult = await withProviderFallback(provider, async (activeProvider) => {
+      const state: ProviderRunState = {};
+      const raw = await generateWithProvider(activeProvider, state, prompt);
+      const parsed = parseLooseJson(raw) as {
+        admin_report?: unknown;
+        candidate_summary?: unknown;
+      };
+      const normalized = normalizePpapNarratives(parsed, localNarratives);
+
+      return {
+        detail: state.detail,
+        value: normalized,
+      };
+    });
+
+    return {
+      ...providerResult.value,
+      provider: providerResult.provider,
+      providerDetail: providerResult.detail || undefined,
+      providerWarnings: providerResult.warnings,
+    };
+  } catch (error) {
+    return {
+      ...localNarratives,
       provider: "local",
       providerWarnings: extractProviderWarnings(error),
     };
@@ -3108,6 +3160,108 @@ function ensureSentence(value: string) {
   }
 
   return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+}
+
+function buildPpapAnalysisPrompt({
+  intake,
+  scores,
+  responsePattern,
+}: {
+  intake: PpapCandidateIntake;
+  scores: PpapAssessmentScores;
+  responsePattern: ReturnType<typeof buildPpapTendencyResponsePattern>;
+}) {
+  const tendencyLines = scores.tendencyScores
+    .map((tendency) => {
+      const pattern = responsePattern.find((item) => item.tendencyId === tendency.id);
+      const patternSummary = pattern
+        ? `high items: ${formatQuestionList(pattern.highItems)}; low items: ${formatQuestionList(pattern.lowItems)}; reverse-scored items: ${formatQuestionList(pattern.reverseScoredItems)}`
+        : "no item pattern available";
+
+      return `- ${tendency.label}: ${tendency.percentage}% (${patternSummary})`;
+    })
+    .join("\n");
+
+  const questionLines = scores.questionScores
+    .map((item) =>
+      [
+        `Q${item.id}`,
+        `raw=${item.response}`,
+        `adjusted=${item.adjustedResponse}`,
+        item.reverseScored ? "reverse-scored" : "direct",
+      ].join(" | ")
+    )
+    .join("\n");
+
+  return [
+    "SYSTEM PROMPT:",
+    "You are a workplace personality analyst producing a structured tendency report for a hiring team at Pinnah Foods Limited, a Nigerian QSR company. Your job is to describe who this candidate appears to be based on their assessment responses - not to judge whether they are a good or bad hire. The hiring team will determine fit based on their team dynamics and role needs.",
+    "",
+    "Produce your analysis in two parts:",
+    "",
+    "PART 1 - ADMIN REPORT (confidential, for hiring team only):",
+    "For each of the five tendencies, write 3-4 sentences describing what the candidate's response pattern reveals about how they tend to show up at work. Use behavioural language - describe tendencies, not conclusions. Flag any notable cross-tendency patterns (e.g. high team orientation but low accountability - pleasant but may avoid ownership). Do not use score numbers in the narrative. End with a 2-3 sentence overall character summary.",
+    "",
+    "PART 2 - CANDIDATE SUMMARY (to be shown to candidate):",
+    "Write 100-120 words in warm, honest, first-person-addressed language. Start with \"Based on your responses...\" Describe 2 genuine strengths and 1 honest area for self-reflection. Do not reference scores, bands, or hiring decisions. This should feel like useful self-insight, not assessment feedback.",
+    "",
+    "Format your response as valid JSON with two keys: \"admin_report\" and \"candidate_summary\".",
+    "",
+    "USER MESSAGE:",
+    [
+      `Candidate name: ${intake.fullName || "Candidate"}`,
+      `Role applied for: ${intake.roleApplied || "Unspecified role"}`,
+      `Brand/function: ${intake.brand}`,
+      `Overall PPAP score: ${scores.overallScore}%`,
+      `Band: ${scores.band}`,
+      `Social desirability flag: ${scores.socialDesirabilityFlag ? "yes" : "no"}`,
+      "",
+      "Per-tendency scores:",
+      tendencyLines,
+      "",
+      "Raw response pattern by question:",
+      questionLines,
+    ].join("\n"),
+  ].join("\n");
+}
+
+function normalizePpapNarratives(
+  value: unknown,
+  fallback: { adminReport: string; candidateSummary: string }
+) {
+  const parsed = (value ?? {}) as Partial<{
+    admin_report: unknown;
+    candidate_summary: unknown;
+  }>;
+
+  const adminReport = normalizeNarrativeField(parsed.admin_report, fallback.adminReport);
+  const candidateSummary = normalizeNarrativeField(
+    parsed.candidate_summary,
+    fallback.candidateSummary
+  );
+
+  return {
+    adminReport,
+    candidateSummary,
+  };
+}
+
+function normalizeNarrativeField(value: unknown, fallback: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const cleaned = value.replace(/\s+/g, " ").trim();
+
+  return cleaned || fallback;
+}
+
+function formatQuestionList(items: number[]) {
+  if (items.length === 0) {
+    return "none";
+  }
+
+  return items.map((item) => `Q${item}`).join(", ");
 }
 
 function parseLooseJson(raw: string) {

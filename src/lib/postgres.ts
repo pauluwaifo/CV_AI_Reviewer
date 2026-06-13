@@ -8,7 +8,7 @@ declare global {
   var __hrBoardPostgresSchemaKey: string | undefined;
 }
 
-const POSTGRES_SCHEMA_KEY = "2026-05-25-workspace-mail-smtp-v1";
+const POSTGRES_SCHEMA_KEY = "2026-06-13-ppap-assessment-v1";
 
 export function isPostgresConfigured() {
   return Boolean(process.env.DATABASE_URL?.trim());
@@ -148,6 +148,9 @@ async function createSchema() {
   const pool = getPostgresPool();
 
   const statements = [
+    `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto
+    `,
     `
     CREATE TABLE IF NOT EXISTS workspace_settings (
       workspace_id TEXT PRIMARY KEY,
@@ -394,8 +397,45 @@ async function createSchema() {
       applicant JSONB NOT NULL DEFAULT '{}'::jsonb,
       analysis JSONB NOT NULL DEFAULT '{}'::jsonb,
       resume_file JSONB NOT NULL DEFAULT '{}'::jsonb,
-      workflow JSONB NOT NULL DEFAULT '{}'::jsonb
+      workflow JSONB NOT NULL DEFAULT '{}'::jsonb,
+      personality_assessment JSONB NULL
     )
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS candidates (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      workspace_id TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      email TEXT NULL,
+      role_applied TEXT NOT NULL,
+      brand TEXT NOT NULL,
+      responses JSONB NOT NULL,
+      scores JSONB NOT NULL,
+      overall_score NUMERIC NOT NULL,
+      band TEXT NOT NULL DEFAULT '',
+      admin_report TEXT NOT NULL,
+      candidate_summary TEXT NOT NULL,
+      social_desirability_flag BOOLEAN NOT NULL DEFAULT FALSE,
+      ai_provider TEXT NOT NULL DEFAULT 'local',
+      ai_provider_detail TEXT NOT NULL DEFAULT ''
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_candidates_workspace_created_at
+      ON candidates (workspace_id, created_at DESC)
+    `,
+    `
+    ALTER TABLE candidates
+      ADD COLUMN IF NOT EXISTS band TEXT NOT NULL DEFAULT ''
+    `,
+    `
+    ALTER TABLE candidates
+      ADD COLUMN IF NOT EXISTS ai_provider TEXT NOT NULL DEFAULT 'local'
+    `,
+    `
+    ALTER TABLE candidates
+      ADD COLUMN IF NOT EXISTS ai_provider_detail TEXT NOT NULL DEFAULT ''
     `,
     `
     CREATE INDEX IF NOT EXISTS idx_hiring_applications_workspace_form_created_at
@@ -404,6 +444,10 @@ async function createSchema() {
     `
     ALTER TABLE hiring_applications
       ADD COLUMN IF NOT EXISTS workflow JSONB NOT NULL DEFAULT '{}'::jsonb
+    `,
+    `
+    ALTER TABLE hiring_applications
+      ADD COLUMN IF NOT EXISTS personality_assessment JSONB NULL
     `,
     `
     CREATE TABLE IF NOT EXISTS candidate_email_drafts (

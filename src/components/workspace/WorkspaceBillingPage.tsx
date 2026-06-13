@@ -467,6 +467,10 @@ export default function WorkspaceBillingPage({
                     : "No successful payment yet"
                 }
               />
+              <BillingInfoCard
+                label="Gemini credits left"
+                value={formatGeminiCredits(summary.controls.billing.geminiCreditsRemaining)}
+              />
             </div>
 
             {!summary.controls.billing.enabled ? (
@@ -1357,6 +1361,12 @@ function formatNaira(amountKobo: number) {
     style: "currency",
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatGeminiCredits(credits: number) {
+  const safeCredits = Math.max(0, Math.round(credits));
+
+  return `${new Intl.NumberFormat("en-US").format(safeCredits)} credit${safeCredits === 1 ? "" : "s"}`;
 }
 
 function isValidBillingEmail(value: string) {

@@ -18,6 +18,7 @@ import {
   readLocalHiringFunnelStoreForMigration,
   readLocalUploadedBinaryByStoragePath,
   saveLocalUploadedBinary,
+  updateLocalHiringApplicationPersonalityAssessment,
   updateLocalHiringApplicationWorkflow,
   updateLocalHiringForm,
 } from "@/lib/local-hiring-funnel-store";
@@ -28,6 +29,9 @@ import {
   buildInitialHiringApplicationWorkflow,
   normalizeHiringApplicationWorkflow,
 } from "@/lib/hiring-application-workflow";
+import {
+  normalizePersonalityAssessmentSnapshot,
+} from "@/lib/personality-assessment";
 import {
   isPostgresConfigured,
   queryPostgres,
@@ -543,6 +547,7 @@ export async function createHiringApplication({
         roleSetup: normalizeRoleSetup(form.role_setup),
         screeningPolicy: normalizeHiringFormScreeningPolicy(form.screening_policy),
       }),
+      personalityAssessment: null,
     };
 
     await client.query(
@@ -556,12 +561,13 @@ export async function createHiringApplication({
           applicant,
           analysis,
           resume_file,
-          workflow
+          workflow,
+          personality_assessment
         )
         VALUES (
           $1, $2, $3, $4,
           $5::timestamptz,
-          $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb
+          $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb
         )
       `,
       [
@@ -574,6 +580,9 @@ export async function createHiringApplication({
         JSON.stringify(application.analysis),
         JSON.stringify(application.resumeFile),
         JSON.stringify(application.workflow),
+        application.personalityAssessment
+          ? JSON.stringify(application.personalityAssessment)
+          : null,
       ]
     );
 
@@ -611,6 +620,44 @@ export async function updateHiringApplicationWorkflow({
       applicationId,
       sanitizeWorkspaceId(workspaceId),
       JSON.stringify(normalizeHiringApplicationWorkflow(workflow)),
+    ]
+  );
+
+  return result.rows[0] ? toApplicationRecordFromRow(result.rows[0]) : null;
+}
+
+export async function updateHiringApplicationPersonalityAssessment({
+  applicationId,
+  workspaceId,
+  personalityAssessment,
+}: {
+  applicationId: string;
+  workspaceId: string;
+  personalityAssessment: HiringApplicationRecord["personalityAssessment"];
+}) {
+  if (!isPostgresConfigured()) {
+    return updateLocalHiringApplicationPersonalityAssessment({
+      applicationId,
+      workspaceId,
+      personalityAssessment,
+    });
+  }
+
+  await ensureHiringFunnelSeeded();
+
+  const normalizedAssessment = normalizePersonalityAssessmentSnapshot(personalityAssessment);
+
+  const result = await queryPostgres<DbApplicationRow>(
+    `
+      UPDATE hiring_applications
+      SET personality_assessment = $3::jsonb
+      WHERE id = $1 AND workspace_id = $2
+      RETURNING *
+    `,
+    [
+      applicationId,
+      sanitizeWorkspaceId(workspaceId),
+      normalizedAssessment ? JSON.stringify(normalizedAssessment) : null,
     ]
   );
 
@@ -919,12 +966,13 @@ async function ensureHiringFunnelSeeded() {
           applicant,
           analysis,
           resume_file,
-          workflow
+          workflow,
+          personality_assessment
         )
         VALUES (
           $1, $2, $3, $4,
           $5::timestamptz,
-          $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb
+          $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb
         )
         ON CONFLICT (id) DO NOTHING
       `,
@@ -938,6 +986,9 @@ async function ensureHiringFunnelSeeded() {
         JSON.stringify(application.analysis),
         JSON.stringify(resumeFile),
         JSON.stringify(application.workflow),
+        application.personalityAssessment
+          ? JSON.stringify(application.personalityAssessment)
+          : null,
       ]
     );
   }
@@ -1077,6 +1128,9 @@ function toApplicationRecordFromRow(row: DbApplicationRow): HiringApplicationRec
     resumeFile: normalizeStoredResumeFile(row.resume_file),
     analysis: normalizeAnalysisResponse(row.analysis),
     workflow: normalizeHiringApplicationWorkflow(row.workflow),
+    personalityAssessment: normalizePersonalityAssessmentSnapshot(
+      row.personality_assessment
+    ),
   };
 }
 
@@ -1414,6 +1468,7 @@ type DbApplicationRow = QueryResultRow & {
   created_at: Date | string;
   form_id: string;
   id: string;
+  personality_assessment: unknown;
   resume_file: unknown;
   workflow: unknown;
   workspace_id: string;

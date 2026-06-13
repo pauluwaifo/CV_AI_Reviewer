@@ -31,38 +31,43 @@ export async function getWorkspaceSettings(
   await ensureWorkspaceSettingsSeeded();
 
   const normalizedWorkspaceId = sanitizeWorkspaceId(workspaceId);
-  const result = await queryPostgres<WorkspaceSettingsRow>(
-    `
-      SELECT workspace_id, settings
-      FROM workspace_settings
-      WHERE workspace_id = $1
-      LIMIT 1
-    `,
-    [normalizedWorkspaceId]
-  );
-  const existing = result.rows[0];
+  try {
+    const result = await queryPostgres<WorkspaceSettingsRow>(
+      `
+        SELECT workspace_id, settings
+        FROM workspace_settings
+        WHERE workspace_id = $1
+        LIMIT 1
+      `,
+      [normalizedWorkspaceId]
+    );
+    const existing = result.rows[0];
 
-  if (existing) {
-    return parseWorkspaceSettings({
-      ...(existing.settings ?? {}),
-      workspaceId: normalizedWorkspaceId,
-    });
+    if (existing) {
+      return parseWorkspaceSettings({
+        ...(existing.settings ?? {}),
+        workspaceId: normalizedWorkspaceId,
+      });
+    }
+
+    const defaultSettings = buildDefaultWorkspaceSettings(normalizedWorkspaceId);
+
+    await queryPostgres(
+      `
+        INSERT INTO workspace_settings (workspace_id, settings, updated_at)
+        VALUES ($1, $2::jsonb, NOW())
+        ON CONFLICT (workspace_id) DO UPDATE
+        SET settings = EXCLUDED.settings,
+            updated_at = NOW()
+      `,
+      [normalizedWorkspaceId, JSON.stringify(defaultSettings)]
+    );
+
+    return defaultSettings;
+  } catch (error) {
+    console.warn("[workspace-settings] Falling back to local settings:", formatStoreWarning(error));
+    return getLocalWorkspaceSettings(workspaceId);
   }
-
-  const defaultSettings = buildDefaultWorkspaceSettings(normalizedWorkspaceId);
-
-  await queryPostgres(
-    `
-      INSERT INTO workspace_settings (workspace_id, settings, updated_at)
-      VALUES ($1, $2::jsonb, NOW())
-      ON CONFLICT (workspace_id) DO UPDATE
-      SET settings = EXCLUDED.settings,
-          updated_at = NOW()
-    `,
-    [normalizedWorkspaceId, JSON.stringify(defaultSettings)]
-  );
-
-  return defaultSettings;
 }
 
 export async function saveWorkspaceSettings(
@@ -73,26 +78,31 @@ export async function saveWorkspaceSettings(
     return saveLocalWorkspaceSettings(workspaceId, nextSettings);
   }
 
-  const existingSettings = await getWorkspaceSettings(workspaceId);
-  const normalizedWorkspaceId = sanitizeWorkspaceId(workspaceId);
-  const mergedSettings = parseWorkspaceSettings({
-    ...existingSettings,
-    ...nextSettings,
-    workspaceId: normalizedWorkspaceId,
-  });
+  try {
+    const existingSettings = await getWorkspaceSettings(workspaceId);
+    const normalizedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+    const mergedSettings = parseWorkspaceSettings({
+      ...existingSettings,
+      ...nextSettings,
+      workspaceId: normalizedWorkspaceId,
+    });
 
-  await queryPostgres(
-    `
-      INSERT INTO workspace_settings (workspace_id, settings, updated_at)
-      VALUES ($1, $2::jsonb, NOW())
-      ON CONFLICT (workspace_id) DO UPDATE
-      SET settings = EXCLUDED.settings,
-          updated_at = NOW()
-    `,
-    [normalizedWorkspaceId, JSON.stringify(mergedSettings)]
-  );
+    await queryPostgres(
+      `
+        INSERT INTO workspace_settings (workspace_id, settings, updated_at)
+        VALUES ($1, $2::jsonb, NOW())
+        ON CONFLICT (workspace_id) DO UPDATE
+        SET settings = EXCLUDED.settings,
+            updated_at = NOW()
+      `,
+      [normalizedWorkspaceId, JSON.stringify(mergedSettings)]
+    );
 
-  return mergedSettings;
+    return mergedSettings;
+  } catch (error) {
+    console.warn("[workspace-settings] Saving to local settings instead:", formatStoreWarning(error));
+    return saveLocalWorkspaceSettings(workspaceId, nextSettings);
+  }
 }
 
 async function ensureWorkspaceSettingsSeeded() {
@@ -146,3 +156,7 @@ type WorkspaceSettingsRow = QueryResultRow & {
   settings: Partial<WorkspaceSettings> | null;
   workspace_id: string;
 };
+
+function formatStoreWarning(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}

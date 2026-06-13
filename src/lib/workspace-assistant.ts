@@ -125,6 +125,24 @@ const WORKSPACE_TOOL_GUIDE_OVERRIDES: Partial<
       "generate jd",
     ],
   },
+  personality_assessment: {
+    summary:
+      "Review a candidate's work-style pattern through bright side traits, derailers, and values so you can plan a sharper follow-up interview.",
+    howToUse: [
+      "Open Personality Assessment and choose the role lens that matches the candidate.",
+      "Review the bright side, derailers, and values panels as you score the profile.",
+      "Use the fit meter, summary, and interview prompts to guide the next conversation.",
+    ],
+    keywords: [
+      "personality",
+      "assessment",
+      "work style",
+      "derailers",
+      "values",
+      "traits",
+      "fit meter",
+    ],
+  },
   candidate_mail: {
     summary:
       "Compose rejection and follow-up emails, request approval, and send candidate communication from one shared workspace flow.",

@@ -17,6 +17,7 @@ import {
   ListIcon,
   MailIcon,
   PieChartIcon,
+  ShootingStarIcon,
   TaskIcon,
 } from "../icons";
 
@@ -46,6 +47,22 @@ export default function AppSidebar({
       icon: <TaskIcon />,
       visible: isWorkspaceModuleAccessible(controls, "results"),
     },
+    {
+      name: "Personality",
+      path: "/personality",
+      icon: <ShootingStarIcon />,
+      visible: isWorkspaceModuleAccessible(controls, "personality_assessment"),
+    },
+    ...(session?.role === "admin"
+      ? [
+          {
+            name: "PPAP Dashboard",
+            path: "/ppap-dashboard",
+            icon: <ShootingStarIcon />,
+            visible: true,
+          },
+        ]
+      : []),
     {
       name: "Analytics",
       path: "/analytics",

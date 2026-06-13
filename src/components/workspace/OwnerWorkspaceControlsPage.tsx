@@ -630,9 +630,27 @@ export default function OwnerWorkspaceControlsPage({
                             current
                               ? { ...current, billing: { ...current.billing, customerEmail: value } }
                               : current
-                          )
+                        )
                         }
                         placeholder={selectedWorkspace.contactEmail || "billing@company.com"}
+                      />
+                      <OwnerCountField
+                        label="Gemini credits left"
+                        value={draft.billing.geminiCreditsRemaining}
+                        onChange={(geminiCreditsRemaining) =>
+                          setDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  billing: {
+                                    ...current.billing,
+                                    geminiCreditsRemaining,
+                                  },
+                                }
+                              : current
+                          )
+                        }
+                        placeholder="100"
                       />
                       <OwnerField
                         label="Monthly plan code"
@@ -1125,6 +1143,38 @@ function OwnerMoneyField({
         onChange={(event) => {
           const nextValue = Number.parseFloat(event.target.value || "0");
           onChange(Number.isFinite(nextValue) ? Math.max(0, Math.round(nextValue * 100)) : 0);
+        }}
+        placeholder={placeholder}
+        className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-hidden transition focus:border-brand-400 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+      />
+    </label>
+  );
+}
+
+function OwnerCountField({
+  label,
+  onChange,
+  placeholder,
+  value,
+}: {
+  label: string;
+  onChange: (value: number) => void;
+  placeholder: string;
+  value: number;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-sm font-medium text-gray-900 dark:text-gray-200">
+        {label}
+      </span>
+      <input
+        type="number"
+        min={0}
+        step={1}
+        value={value > 0 ? String(value) : ""}
+        onChange={(event) => {
+          const nextValue = Number.parseFloat(event.target.value || "0");
+          onChange(Number.isFinite(nextValue) ? Math.max(0, Math.round(nextValue)) : 0);
         }}
         placeholder={placeholder}
         className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-hidden transition focus:border-brand-400 dark:border-gray-700 dark:bg-gray-900 dark:text-white"

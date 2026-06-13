@@ -97,6 +97,7 @@ export default function AnalyzerHomePage({
       ? "/workspace"
       : "/pipeline"
     : "/signin?next=%2Fpipeline";
+  const ppapHref = `/ppap?workspace=${encodeURIComponent(settings.workspaceId)}`;
   const secondaryLabel = isAuthenticated
     ? canManageWorkspace
       ? "Workspace Settings"
@@ -399,6 +400,12 @@ export default function AnalyzerHomePage({
                   className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-white/12 px-6 py-4 text-base font-medium text-white/84 transition hover:bg-white/6 hover:text-white sm:px-7"
                 >
                   {secondaryLabel}
+                </Link>
+                <Link
+                  href={ppapHref}
+                  className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-white/12 px-6 py-4 text-base font-medium text-white/84 transition hover:bg-white/6 hover:text-white sm:px-7"
+                >
+                  Start PPAP Assessment
                 </Link>
                 {demoState === "available" ? (
                   <button

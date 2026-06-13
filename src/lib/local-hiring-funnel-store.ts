@@ -32,6 +32,9 @@ import {
   normalizeHiringApplicationWorkflow,
 } from "@/lib/hiring-application-workflow";
 import {
+  normalizePersonalityAssessmentSnapshot,
+} from "@/lib/personality-assessment";
+import {
   deleteLocalCandidateEmailDraftsByApplicationId,
   deleteLocalCandidateEmailDraftsByFormId,
 } from "@/lib/local-candidate-email-store";
@@ -289,6 +292,7 @@ export async function createLocalHiringApplication({
       roleSetup: form.roleSetup,
       screeningPolicy: form.screeningPolicy,
     }),
+    personalityAssessment: null,
   };
 
   store.applications.unshift(application);
@@ -320,6 +324,36 @@ export async function updateLocalHiringApplicationWorkflow({
   const next: HiringApplicationRecord = {
     ...current,
     workflow: normalizeHiringApplicationWorkflow(workflow, current.workflow),
+  };
+
+  store.applications.splice(index, 1, next);
+  await writeStore(store);
+  return next;
+}
+
+export async function updateLocalHiringApplicationPersonalityAssessment({
+  applicationId,
+  workspaceId,
+  personalityAssessment,
+}: {
+  applicationId: string;
+  workspaceId: string;
+  personalityAssessment: HiringApplicationRecord["personalityAssessment"];
+}) {
+  const store = await readStore();
+  const scopedWorkspaceId = sanitizeWorkspaceId(workspaceId);
+  const index = store.applications.findIndex(
+    (item) => item.id === applicationId && item.workspaceId === scopedWorkspaceId
+  );
+
+  if (index < 0) {
+    return null;
+  }
+
+  const current = store.applications[index];
+  const next: HiringApplicationRecord = {
+    ...current,
+    personalityAssessment: normalizePersonalityAssessmentSnapshot(personalityAssessment),
   };
 
   store.applications.splice(index, 1, next);
@@ -661,6 +695,10 @@ function normalizeApplicationRecord(value: unknown): HiringApplicationRecord | n
     resumeFile: parsed.resumeFile as StoredResumeFile,
     analysis: parsed.analysis as AnalysisResponse,
     workflow: normalizeHiringApplicationWorkflow(parsed.workflow),
+    personalityAssessment:
+      "personalityAssessment" in parsed
+        ? normalizePersonalityAssessmentSnapshot(parsed.personalityAssessment)
+        : null,
   };
 }
 

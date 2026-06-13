@@ -14,6 +14,12 @@ export const WORKSPACE_FEATURE_MODULES = [
     description: "Review saved screening outcomes and comparisons.",
   },
   {
+    key: "personality_assessment",
+    label: "Personality Assessment",
+    path: "/personality",
+    description: "Review work-style signals, derailers, and values for a candidate.",
+  },
+  {
     key: "analytics",
     label: "Analytics",
     path: "/analytics",
@@ -91,6 +97,7 @@ export type WorkspaceBillingSettings = {
   enabled: boolean;
   provider: "paystack";
   currency: "NGN";
+  geminiCreditsRemaining: number;
   monthlyAmountKobo: number;
   monthlyPlanCode: string;
   yearlyAmountKobo: number;
@@ -126,6 +133,7 @@ export const DEFAULT_WORKSPACE_BILLING_SETTINGS: WorkspaceBillingSettings = {
   enabled: false,
   provider: "paystack",
   currency: "NGN",
+  geminiCreditsRemaining: 0,
   monthlyAmountKobo: 0,
   monthlyPlanCode: "",
   yearlyAmountKobo: 0,
@@ -485,6 +493,10 @@ function parseWorkspaceBillingSettings(
     enabled: Boolean(parsed.enabled),
     provider: "paystack",
     currency: "NGN",
+    geminiCreditsRemaining: normalizeNonNegativeInteger(
+      parsed.geminiCreditsRemaining,
+      fallback.geminiCreditsRemaining
+    ),
     monthlyAmountKobo: normalizeNonNegativeInteger(
       parsed.monthlyAmountKobo,
       parsed.interval === "monthly"

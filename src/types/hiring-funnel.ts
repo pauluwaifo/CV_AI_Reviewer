@@ -3,6 +3,7 @@ import type {
   RoleSetup,
   UploadSourceKind,
 } from "@/types/document-intelligence";
+import type { PersonalityAssessmentSnapshot } from "@/lib/personality-assessment";
 
 export interface WorkspacePublicSnapshot {
   appName: string;
@@ -159,6 +160,7 @@ export interface HiringApplicationRecord {
   resumeFile: StoredResumeFile;
   analysis: AnalysisResponse;
   workflow: HiringApplicationWorkflow;
+  personalityAssessment: PersonalityAssessmentSnapshot | null;
 }
 
 export interface HiringFunnelStoreData {
