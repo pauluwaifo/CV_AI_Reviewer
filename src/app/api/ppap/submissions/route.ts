@@ -68,6 +68,7 @@ export async function POST(request: Request) {
       intake,
       scores,
       provider: "auto",
+      workspaceId,
     });
 
     const submission = await createPpapSubmission({

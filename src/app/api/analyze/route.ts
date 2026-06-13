@@ -56,7 +56,8 @@ export async function POST(request: Request) {
 
     const mergedAnalysisGoal = await buildMergedAnalysisGoal(
       analysisGoal,
-      jobDescriptionFile
+      jobDescriptionFile,
+      access.session.workspaceId
     );
 
     const payload = await analyzeUpload({
@@ -66,6 +67,7 @@ export async function POST(request: Request) {
       providerFallbackMode,
       analysisGoal: mergedAnalysisGoal,
       roleSetup,
+      workspaceId: access.session.workspaceId,
     });
 
     const screening = await createScreeningSession({
@@ -108,12 +110,13 @@ export async function POST(request: Request) {
 
 async function buildMergedAnalysisGoal(
   analysisGoal: string,
-  jobDescriptionFile: FormDataEntryValue | null
+  jobDescriptionFile: FormDataEntryValue | null,
+  workspaceId: string
 ) {
   const sections = [analysisGoal].filter(Boolean);
 
   if (jobDescriptionFile instanceof File) {
-    const extracted = await extractUploadTextFromFile(jobDescriptionFile);
+    const extracted = await extractUploadTextFromFile(jobDescriptionFile, workspaceId);
     const trimmed = extracted.text.slice(0, 6_000).trim();
 
     if (trimmed) {

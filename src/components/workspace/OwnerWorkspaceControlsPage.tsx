@@ -635,16 +635,16 @@ export default function OwnerWorkspaceControlsPage({
                         placeholder={selectedWorkspace.contactEmail || "billing@company.com"}
                       />
                       <OwnerCountField
-                        label="Gemini credits left"
-                        value={draft.billing.geminiCreditsRemaining}
-                        onChange={(geminiCreditsRemaining) =>
+                        label="AI credits left"
+                        value={draft.billing.aiCreditsRemaining}
+                        onChange={(aiCreditsRemaining) =>
                           setDraft((current) =>
                             current
                               ? {
                                   ...current,
                                   billing: {
                                     ...current.billing,
-                                    geminiCreditsRemaining,
+                                    aiCreditsRemaining,
                                   },
                                 }
                               : current

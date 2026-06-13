@@ -90,6 +90,7 @@ export async function POST(
       appName: settings.appName,
       prompt,
       provider: "auto",
+      workspaceId: access.session.workspaceId,
     });
     const timestamp = new Date().toISOString();
     const draft = await createCandidateEmailDraft({

@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     }
 
     const jdAttachment = jdFile instanceof File
-      ? await buildJdAttachment(jdFile)
+      ? await buildJdAttachment(jdFile, session.workspaceId)
       : jdText
         ? buildTextJdAttachment(jdText, jdTextFileName)
         : null;
@@ -229,8 +229,8 @@ function parseSystemKey(value: unknown): HiringFormField["systemKey"] | undefine
     : undefined;
 }
 
-async function buildJdAttachment(file: File) {
-  const extracted = await extractUploadTextFromFile(file);
+async function buildJdAttachment(file: File, workspaceId: string) {
+  const extracted = await extractUploadTextFromFile(file, workspaceId);
   return {
     fileName: file.name,
     inputKind: extracted.inputKind,

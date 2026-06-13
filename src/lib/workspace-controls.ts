@@ -97,7 +97,7 @@ export type WorkspaceBillingSettings = {
   enabled: boolean;
   provider: "paystack";
   currency: "NGN";
-  geminiCreditsRemaining: number;
+  aiCreditsRemaining: number;
   monthlyAmountKobo: number;
   monthlyPlanCode: string;
   yearlyAmountKobo: number;
@@ -133,7 +133,7 @@ export const DEFAULT_WORKSPACE_BILLING_SETTINGS: WorkspaceBillingSettings = {
   enabled: false,
   provider: "paystack",
   currency: "NGN",
-  geminiCreditsRemaining: 0,
+  aiCreditsRemaining: 0,
   monthlyAmountKobo: 0,
   monthlyPlanCode: "",
   yearlyAmountKobo: 0,
@@ -445,6 +445,7 @@ function parseWorkspaceBillingSettings(
   const parsed = (value ?? {}) as Partial<WorkspaceBillingSettings> & {
     activePlanKey?: unknown;
     activePlanKind?: unknown;
+    aiCreditsRemaining?: unknown;
     monthlyAmountKobo?: unknown;
     monthlyPlanCode?: unknown;
     upgradeAmountKobo?: unknown;
@@ -452,6 +453,7 @@ function parseWorkspaceBillingSettings(
     upgradePlanCode?: unknown;
     upgradePlanName?: unknown;
     upgradePlans?: unknown;
+    geminiCreditsRemaining?: unknown;
     yearlyAmountKobo?: unknown;
     yearlyPlanCode?: unknown;
   };
@@ -493,9 +495,9 @@ function parseWorkspaceBillingSettings(
     enabled: Boolean(parsed.enabled),
     provider: "paystack",
     currency: "NGN",
-    geminiCreditsRemaining: normalizeNonNegativeInteger(
-      parsed.geminiCreditsRemaining,
-      fallback.geminiCreditsRemaining
+    aiCreditsRemaining: normalizeNonNegativeInteger(
+      parsed.aiCreditsRemaining ?? parsed.geminiCreditsRemaining,
+      fallback.aiCreditsRemaining
     ),
     monthlyAmountKobo: normalizeNonNegativeInteger(
       parsed.monthlyAmountKobo,

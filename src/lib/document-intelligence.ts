@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { PDFParse } from "pdf-parse";
 
 import { buildLocalAnalysis } from "@/lib/local-document-analysis";
+import { consumeWorkspaceAiCredits } from "@/lib/workspace-ai-credits";
 import {
   buildLocalOwnerAssistantReply,
   buildOwnerAssistantSystemPrompt,
@@ -171,6 +172,7 @@ type ProviderAttemptResult<T> = {
 
 type ProviderRunState = {
   detail?: string;
+  creditUsage?: number;
 };
 
 export class DocumentAnalysisError extends Error {
@@ -190,6 +192,7 @@ export async function analyzeUpload({
   providerFallbackMode = "cross-provider",
   analysisGoal,
   roleSetup,
+  workspaceId,
 }: {
   file: File;
   documentType: DocumentType;
@@ -197,13 +200,15 @@ export async function analyzeUpload({
   providerFallbackMode?: ProviderFallbackMode;
   analysisGoal?: string;
   roleSetup?: RoleSetup;
+  workspaceId?: string;
 }): Promise<AnalysisResponse> {
   const buffer = Buffer.from(await file.arrayBuffer());
   const uploadKind = validateUpload(file);
   const { text, pageCount, inputKind, mimeType } = await extractUploadContent(
     file,
     buffer,
-    uploadKind
+    uploadKind,
+    workspaceId
   );
   const minimumTextLength =
     inputKind === "image" ? IMAGE_MIN_EXTRACTED_TEXT_LENGTH : MIN_EXTRACTED_TEXT_LENGTH;
@@ -260,7 +265,8 @@ export async function analyzeUpload({
               analysisGoal,
               roleSetup,
               content: providerText,
-            })
+            }),
+            workspaceId
           );
 
           return {
@@ -286,7 +292,8 @@ export async function analyzeUpload({
               documentType,
               analysisGoal,
               roleSetup,
-            })
+            }),
+            workspaceId
           );
 
           digests.push(normalizeChunkDigest(parseLooseJson(rawDigest)));
@@ -301,7 +308,8 @@ export async function analyzeUpload({
             documentType,
             analysisGoal,
             roleSetup,
-          })
+          }),
+          workspaceId
         );
 
         return {
@@ -369,6 +377,7 @@ export async function generateJobDescriptionDraft({
   analysisGoal,
   roleSetup,
   provider = "auto",
+  workspaceId,
 }: {
   title?: string;
   team?: string;
@@ -376,6 +385,7 @@ export async function generateJobDescriptionDraft({
   analysisGoal?: string;
   roleSetup?: RoleSetup;
   provider?: AnalysisProvider;
+  workspaceId?: string;
 }): Promise<{
   jobDescription: string;
   provider: ResolvedProvider;
@@ -404,7 +414,8 @@ export async function generateJobDescriptionDraft({
             intro,
             analysisGoal,
             roleSetup,
-          })
+          }),
+          workspaceId
         );
         const parsed = parseLooseJson(raw) as { jobDescription?: unknown };
 
@@ -441,6 +452,7 @@ export async function generateHiringFormDraft({
   roleSetup,
   prompt,
   provider = "auto",
+  workspaceId,
 }: {
   title?: string;
   team?: string;
@@ -449,6 +461,7 @@ export async function generateHiringFormDraft({
   roleSetup?: RoleSetup;
   prompt?: string;
   provider?: AnalysisProvider;
+  workspaceId?: string;
 }): Promise<{
   draft: {
     title: string;
@@ -486,7 +499,8 @@ export async function generateHiringFormDraft({
             analysisGoal,
             roleSetup,
             prompt,
-          })
+          }),
+          workspaceId
         );
 
         return {
@@ -515,10 +529,12 @@ export async function generateWorkspaceAssistantReply({
   context,
   messages,
   provider = "auto",
+  workspaceId,
 }: {
   context: WorkspaceAssistantContext;
   messages: WorkspaceAssistantMessage[];
   provider?: AnalysisProvider;
+  workspaceId?: string;
 }): Promise<{
   reply: string;
   provider: ResolvedProvider;
@@ -542,7 +558,8 @@ export async function generateWorkspaceAssistantReply({
             context,
             messages,
             provider,
-          })
+          }),
+          workspaceId
         );
         const parsed = parseLooseJson(raw) as { reply?: unknown };
 
@@ -572,10 +589,12 @@ export async function generateOwnerAssistantReply({
   context,
   messages,
   provider = "auto",
+  workspaceId,
 }: {
   context: OwnerAssistantContext;
   messages: OwnerAssistantMessage[];
   provider?: AnalysisProvider;
+  workspaceId?: string;
 }): Promise<{
   reply: string;
   provider: ResolvedProvider;
@@ -599,7 +618,8 @@ export async function generateOwnerAssistantReply({
             context,
             messages,
             provider,
-          })
+          }),
+          workspaceId
         );
         const parsed = parseLooseJson(raw) as { reply?: unknown };
 
@@ -633,6 +653,7 @@ export async function generateCandidateEmailDraft({
   appName,
   prompt,
   provider = "auto",
+  workspaceId,
 }: {
   kind: CandidateEmailKind;
   application: HiringApplicationRecord;
@@ -641,6 +662,7 @@ export async function generateCandidateEmailDraft({
   appName: string;
   prompt?: string;
   provider?: AnalysisProvider;
+  workspaceId?: string;
 }): Promise<{
   subject: string;
   body: string;
@@ -671,7 +693,8 @@ export async function generateCandidateEmailDraft({
             organizationName,
             appName,
             prompt,
-          })
+          }),
+          workspaceId
         );
         const parsed = parseLooseJson(raw) as {
           subject?: unknown;
@@ -704,10 +727,12 @@ export async function generatePpapAssessmentAnalysis({
   intake,
   scores,
   provider = "auto",
+  workspaceId,
 }: {
   intake: PpapCandidateIntake;
   scores: PpapAssessmentScores;
   provider?: AnalysisProvider;
+  workspaceId?: string;
 }): Promise<{
   adminReport: string;
   candidateSummary: string;
@@ -722,7 +747,7 @@ export async function generatePpapAssessmentAnalysis({
   try {
     const providerResult = await withProviderFallback(provider, async (activeProvider) => {
       const state: ProviderRunState = {};
-      const raw = await generateWithProvider(activeProvider, state, prompt);
+      const raw = await generateWithProvider(activeProvider, state, prompt, workspaceId);
       const parsed = parseLooseJson(raw) as {
         admin_report?: unknown;
         candidate_summary?: unknown;
@@ -750,10 +775,10 @@ export async function generatePpapAssessmentAnalysis({
   }
 }
 
-export async function extractUploadTextFromFile(file: File) {
+export async function extractUploadTextFromFile(file: File, workspaceId?: string) {
   const buffer = Buffer.from(await file.arrayBuffer());
   const inputKind = validateUpload(file);
-  return extractUploadContent(file, buffer, inputKind);
+  return extractUploadContent(file, buffer, inputKind, workspaceId);
 }
 
 function validateUpload(file: File): UploadSourceKind {
@@ -805,7 +830,8 @@ function detectUploadKind(file: File): UploadSourceKind | null {
 async function extractUploadContent(
   file: File,
   buffer: Buffer,
-  inputKind: UploadSourceKind
+  inputKind: UploadSourceKind,
+  workspaceId?: string
 ): Promise<ExtractedUploadContent> {
   if (inputKind === "pdf") {
     const extracted = await extractPdfText(buffer);
@@ -829,7 +855,7 @@ async function extractUploadContent(
     inputKind,
     mimeType: normalizeMimeType(file.type) || inferMimeTypeFromExtension(file.name),
     pageCount: 1,
-    text: await extractImageText(file, buffer),
+    text: await extractImageText(file, buffer, workspaceId),
   };
 }
 
@@ -949,7 +975,7 @@ function extractTextDocument(file: File, buffer: Buffer) {
   return cleanExtractedText(decoded);
 }
 
-async function extractImageText(file: File, buffer: Buffer) {
+async function extractImageText(file: File, buffer: Buffer, workspaceId?: string) {
   const mimeType = normalizeMimeType(file.type) || inferMimeTypeFromExtension(file.name);
   const extracted = await requestGeminiContent({
     parts: [
@@ -964,6 +990,7 @@ async function extractImageText(file: File, buffer: Buffer) {
         },
       },
     ],
+    workspaceId,
   });
 
   return cleanExtractedText(extracted.text);
@@ -1350,32 +1377,47 @@ function getProviderCooldownMs(message: string) {
 async function generateWithProvider(
   provider: RemoteProvider,
   state: ProviderRunState,
-  prompt: string
+  prompt: string,
+  workspaceId?: string
 ) {
   if (provider === "gemini") {
-    return generateWithGemini(prompt, state);
+    const response = await generateWithGemini(prompt, state, workspaceId);
+    state.creditUsage = (state.creditUsage ?? 0) + response.creditUsage;
+    return response.text;
   }
 
-  return generateWithHuggingFace(prompt, state);
+  const response = await generateWithHuggingFace(prompt, state, workspaceId);
+  state.creditUsage = (state.creditUsage ?? 0) + response.creditUsage;
+  return response.text;
 }
 
-async function generateWithGemini(prompt: string, state: ProviderRunState) {
+async function generateWithGemini(
+  prompt: string,
+  state: ProviderRunState,
+  workspaceId?: string
+): Promise<{ creditUsage: number; text: string }> {
   const response = await requestGeminiContent({
     parts: [{ text: prompt }],
     responseMimeType: "application/json",
+    workspaceId,
   });
 
   state.detail = formatGeminiProviderDetail(response.model);
 
-  return response.text;
+  return {
+    creditUsage: response.creditUsage,
+    text: response.text,
+  };
 }
 
 async function requestGeminiContent({
   parts,
   responseMimeType,
+  workspaceId,
 }: {
   parts: Array<Record<string, unknown>>;
   responseMimeType?: string;
+  workspaceId?: string;
 }) {
   const apiKey = process.env.GEMINI_API_KEY;
   const models = getGeminiModelCandidates();
@@ -1391,14 +1433,15 @@ async function requestGeminiContent({
 
   for (const model of models) {
     try {
-      const text = await requestGeminiContentForModel({
+      const result = await requestGeminiContentForModel({
         apiKey,
         model,
         parts,
         responseMimeType,
+        workspaceId,
       });
 
-      return { model, text };
+      return { model, text: result.text, creditUsage: result.creditUsage };
     } catch (error) {
       const message = formatProviderFailure(error);
 
@@ -1423,11 +1466,13 @@ async function requestGeminiContentForModel({
   model,
   parts,
   responseMimeType,
+  workspaceId,
 }: {
   apiKey: string;
   model: string;
   parts: Array<Record<string, unknown>>;
   responseMimeType?: string;
+  workspaceId?: string;
 }) {
   let response: Response;
 
@@ -1468,6 +1513,12 @@ async function requestGeminiContentForModel({
     throw new DocumentAnalysisError(message, response.status);
   }
 
+  const creditUsage = estimateAiCreditUsageFromGeminiPayload(payload, parts);
+  if (workspaceId && creditUsage > 0) {
+    await consumeWorkspaceAiCredits(workspaceId, creditUsage).catch((error) => {
+      console.warn("[AI provider] Failed to update AI credits:", error);
+    });
+  }
   const text = extractGeminiText(payload);
 
   if (!text) {
@@ -1477,7 +1528,7 @@ async function requestGeminiContentForModel({
     );
   }
 
-  return text;
+  return { creditUsage, text };
 }
 
 function extractGeminiText(payload: unknown) {
@@ -1495,6 +1546,69 @@ function extractGeminiText(payload: unknown) {
       .join("")
       .trim() || ""
   );
+}
+
+function estimateAiCreditUsageFromGeminiPayload(
+  payload: unknown,
+  parts: Array<Record<string, unknown>>
+) {
+  const response = payload as {
+    usageMetadata?: {
+      candidatesTokenCount?: number;
+      promptTokenCount?: number;
+      totalTokenCount?: number;
+    } | null;
+  } | null;
+  const usageMetadata = response?.usageMetadata ?? null;
+  const totalTokenCount = normalizePositiveInteger(
+    usageMetadata?.totalTokenCount ?? null
+  );
+  const promptTokenCount = normalizePositiveInteger(
+    usageMetadata?.promptTokenCount ?? null
+  );
+  const candidatesTokenCount = normalizePositiveInteger(
+    usageMetadata?.candidatesTokenCount ?? null
+  );
+  const directTokenCount =
+    totalTokenCount || promptTokenCount + candidatesTokenCount;
+
+  if (directTokenCount > 0) {
+    return normalizeAiCreditUsage(directTokenCount / 1000);
+  }
+
+  const promptText = parts
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .join("\n");
+  const responseText = extractGeminiText(payload);
+
+  return estimateAiCreditUsageFromText(promptText, responseText, "gemini");
+}
+
+function estimateAiCreditUsageFromText(
+  promptText: string,
+  responseText: string,
+  provider: "gemini" | "huggingface"
+) {
+  const characters = Math.max(0, promptText.length) + Math.max(0, responseText.length);
+  const tokensPerCredit = 1_000;
+
+  return normalizeAiCreditUsage(characters / 4 / tokensPerCredit);
+}
+
+function normalizeAiCreditUsage(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+
+  return Math.max(1, Math.ceil(value));
+}
+
+function normalizePositiveInteger(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.round(value);
 }
 
 function shouldRetryGeminiModel(error: unknown) {
@@ -1532,7 +1646,11 @@ function formatGeminiProviderDetail(model: string) {
     .replace(/\b\w/g, (character) => character.toUpperCase())}`;
 }
 
-async function generateWithHuggingFace(prompt: string, state: ProviderRunState) {
+async function generateWithHuggingFace(
+  prompt: string,
+  state: ProviderRunState,
+  workspaceId?: string
+): Promise<{ creditUsage: number; text: string }> {
   const token = process.env.HF_TOKEN;
 
   if (!token) {
@@ -1544,26 +1662,30 @@ async function generateWithHuggingFace(prompt: string, state: ProviderRunState) 
 
   const models = getHuggingFaceModelCandidates();
   const errors: string[] = [];
+  let creditUsage = 0;
 
   for (const model of models) {
     try {
-      const text = await requestHuggingFaceChatCompletion({
+      const firstAttempt = await requestHuggingFaceChatCompletion({
         token,
         model,
         prompt,
         responseStyle: "json",
+        workspaceId,
       });
+      creditUsage += firstAttempt.creditUsage;
+      const text = firstAttempt.text;
 
       if (containsParseableJson(text)) {
         state.detail = model;
-        return text;
+        return { text, creditUsage };
       }
 
       const recoveredText = recoverJsonFromPlainTextResponse(text);
 
       if (recoveredText) {
         state.detail = model;
-        return recoveredText;
+        return { text: recoveredText, creditUsage };
       }
 
       const fallbackText = await requestHuggingFaceChatCompletion({
@@ -1571,24 +1693,26 @@ async function generateWithHuggingFace(prompt: string, state: ProviderRunState) 
         model,
         prompt,
         responseStyle: "plain",
+        workspaceId,
       });
+      creditUsage += fallbackText.creditUsage;
 
-      if (containsParseableJson(fallbackText)) {
+      if (containsParseableJson(fallbackText.text)) {
         state.detail = model;
-        return fallbackText;
+        return { text: fallbackText.text, creditUsage };
       }
 
-      const recoveredFallbackText = recoverJsonFromPlainTextResponse(fallbackText);
+      const recoveredFallbackText = recoverJsonFromPlainTextResponse(fallbackText.text);
 
       if (recoveredFallbackText) {
         state.detail = model;
-        return recoveredFallbackText;
+        return { text: recoveredFallbackText, creditUsage };
       }
 
       console.warn(
         `[AI provider] Hugging Face returned non-JSON text for ${model} in both modes. Structured preview: ${formatProviderTextPreview(
           text
-        )}. Fallback preview: ${formatProviderTextPreview(fallbackText)}.`
+        )}. Fallback preview: ${formatProviderTextPreview(fallbackText.text)}.`
       );
       errors.push(`${model}: returned incomplete plain text in both structured and fallback modes.`);
     } catch (error) {
@@ -1605,23 +1729,25 @@ async function generateWithHuggingFace(prompt: string, state: ProviderRunState) 
           model,
           prompt,
           responseStyle: "plain",
+          workspaceId,
         });
+        creditUsage += fallbackText.creditUsage;
 
-        if (containsParseableJson(fallbackText)) {
+        if (containsParseableJson(fallbackText.text)) {
           state.detail = model;
-          return fallbackText;
+          return { text: fallbackText.text, creditUsage };
         }
 
-        const recoveredFallbackText = recoverJsonFromPlainTextResponse(fallbackText);
+        const recoveredFallbackText = recoverJsonFromPlainTextResponse(fallbackText.text);
 
         if (recoveredFallbackText) {
           state.detail = model;
-          return recoveredFallbackText;
+          return { text: recoveredFallbackText, creditUsage };
         }
 
         console.warn(
           `[AI provider] Hugging Face returned incomplete fallback text for ${model}. Preview: ${formatProviderTextPreview(
-            fallbackText
+            fallbackText.text
           )}.`
         );
         errors.push(`${model}: fallback response was still incomplete.`);
@@ -1648,11 +1774,13 @@ async function requestHuggingFaceChatCompletion({
   model,
   prompt,
   responseStyle,
+  workspaceId,
 }: {
   token: string;
   model: string;
   prompt: string;
   responseStyle: "json" | "plain";
+  workspaceId?: string;
 }) {
   let response: Response;
 
@@ -1706,6 +1834,13 @@ async function requestHuggingFaceChatCompletion({
 
   const content = payload?.choices?.[0]?.message?.content;
   const text = extractHuggingFaceMessageText(content);
+  const creditUsage = estimateAiCreditUsageFromText(prompt, text, "huggingface");
+
+  if (workspaceId && creditUsage > 0) {
+    await consumeWorkspaceAiCredits(workspaceId, creditUsage).catch((error) => {
+      console.warn("[AI provider] Failed to update AI credits:", error);
+    });
+  }
 
   if (!text) {
     throw new DocumentAnalysisError(
@@ -1714,7 +1849,10 @@ async function requestHuggingFaceChatCompletion({
     );
   }
 
-  return text;
+  return {
+    creditUsage,
+    text,
+  };
 }
 
 function buildHuggingFacePlainTextPrompt(prompt: string) {

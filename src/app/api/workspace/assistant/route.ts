@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       },
       messages,
       provider: "auto",
+      workspaceId: access.session.workspaceId,
     });
 
     return NextResponse.json(response);

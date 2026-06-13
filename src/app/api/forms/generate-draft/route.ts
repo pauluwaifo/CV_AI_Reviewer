@@ -68,6 +68,7 @@ export async function POST(request: Request) {
       roleSetup,
       prompt,
       provider: "auto",
+      workspaceId: session.workspaceId,
     });
 
     return NextResponse.json(generated);

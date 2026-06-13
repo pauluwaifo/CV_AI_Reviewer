@@ -468,10 +468,13 @@ export default function WorkspaceBillingPage({
                 }
               />
               <BillingInfoCard
-                label="Gemini credits left"
-                value={formatGeminiCredits(summary.controls.billing.geminiCreditsRemaining)}
+                label="AI credits left"
+                value={formatAiCredits(summary.controls.billing.aiCreditsRemaining)}
               />
             </div>
+            <p className="text-xs leading-6 text-[var(--workspace-form-muted)] dark:text-gray-400">
+              AI credits are reduced automatically when Gemini or Hugging Face runs inside this workspace.
+            </p>
 
             {!summary.controls.billing.enabled ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-7 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
@@ -1363,7 +1366,7 @@ function formatNaira(amountKobo: number) {
   }).format(amount);
 }
 
-function formatGeminiCredits(credits: number) {
+function formatAiCredits(credits: number) {
   const safeCredits = Math.max(0, Math.round(credits));
 
   return `${new Intl.NumberFormat("en-US").format(safeCredits)} credit${safeCredits === 1 ? "" : "s"}`;

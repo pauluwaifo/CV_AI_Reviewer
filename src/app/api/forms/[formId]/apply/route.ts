@@ -100,6 +100,7 @@ export async function POST(
       provider: "auto",
       analysisGoal,
       roleSetup: form.roleSetup,
+      workspaceId: fullForm.workspaceId,
     });
 
     const buffer = Buffer.from(await resumeFile.arrayBuffer());

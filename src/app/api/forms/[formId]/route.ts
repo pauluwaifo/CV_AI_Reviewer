@@ -139,7 +139,7 @@ export async function PATCH(
     }
 
     const jdAttachment = jdFile instanceof File
-      ? await buildJdAttachment(jdFile)
+      ? await buildJdAttachment(jdFile, session.workspaceId)
       : jdText
         ? buildTextJdAttachment(jdText, jdTextFileName)
         : null;
@@ -329,8 +329,8 @@ function buildAttachmentDisposition(fileName: string) {
   return `attachment; filename="${sanitized}"; filename*=UTF-8''${encoded}`;
 }
 
-async function buildJdAttachment(file: File) {
-  const extracted = await extractUploadTextFromFile(file);
+async function buildJdAttachment(file: File, workspaceId: string) {
+  const extracted = await extractUploadTextFromFile(file, workspaceId);
   return {
     fileName: file.name,
     inputKind: extracted.inputKind,

@@ -64,6 +64,7 @@ export async function POST(request: Request) {
       analysisGoal,
       roleSetup,
       provider: "auto",
+      workspaceId: session.workspaceId,
     });
 
     return NextResponse.json(generated);
