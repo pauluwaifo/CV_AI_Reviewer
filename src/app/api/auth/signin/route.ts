@@ -75,7 +75,18 @@ export async function POST(request: Request) {
     });
 
     if (mailDelivery.status !== "sent") {
-      throw new Error(mailDelivery.reason || "I couldn't send the sign-in code right now.");
+      return NextResponse.json({
+        ok: true,
+        requiresTwoFactor: true,
+        challengeId: challenge.challengeId,
+        verificationEmail: challenge.email,
+        expiresInMinutes: challenge.expiresInMinutes,
+        verificationDelivery: "manual",
+        verificationCode: challenge.verificationCode,
+        warning:
+          mailDelivery.reason ||
+          "Email delivery isn't configured on this deployment, so the sign-in code is shown here instead.",
+      });
     }
 
     return NextResponse.json({
@@ -84,6 +95,7 @@ export async function POST(request: Request) {
       challengeId: challenge.challengeId,
       verificationEmail: challenge.email,
       expiresInMinutes: challenge.expiresInMinutes,
+      verificationDelivery: "email",
     });
   } catch (error) {
     if (error instanceof Error) {

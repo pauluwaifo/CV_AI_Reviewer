@@ -108,9 +108,18 @@ export async function POST(request: Request) {
     });
 
     if (mailDelivery.status !== "sent") {
-      throw new Error(
-        mailDelivery.reason || "I couldn't send the verification code right now."
-      );
+      return NextResponse.json({
+        ok: true,
+        requiresVerification: true,
+        challengeId: challenge.challengeId,
+        verificationEmail: challenge.email,
+        expiresInMinutes: challenge.expiresInMinutes,
+        verificationDelivery: "manual",
+        verificationCode: challenge.verificationCode,
+        warning:
+          mailDelivery.reason ||
+          "Email delivery isn't configured on this deployment, so the verification code is shown here instead.",
+      });
     }
 
     return NextResponse.json({
@@ -119,6 +128,7 @@ export async function POST(request: Request) {
       challengeId: challenge.challengeId,
       verificationEmail: challenge.email,
       expiresInMinutes: challenge.expiresInMinutes,
+      verificationDelivery: "email",
     });
   } catch (error) {
     if (error instanceof Error) {

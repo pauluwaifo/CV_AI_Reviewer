@@ -27,6 +27,8 @@ export default function SignUpForm({
   const [verificationExpiresInMinutes, setVerificationExpiresInMinutes] = useState<number | null>(
     null
   );
+  const [verificationDelivery, setVerificationDelivery] = useState<"email" | "manual">("email");
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
   const [showAccessKey, setShowAccessKey] = useState(false);
   const [showConfirmAccessKey, setShowConfirmAccessKey] = useState(false);
   const [keepSignedIn, setKeepSignedIn] = useState(true);
@@ -55,6 +57,9 @@ export default function SignUpForm({
           challengeId?: string;
           verificationEmail?: string;
           expiresInMinutes?: number;
+          verificationCode?: string;
+          verificationDelivery?: "email" | "manual";
+          warning?: string;
         }
       | null;
 
@@ -65,7 +70,9 @@ export default function SignUpForm({
     setChallengeId(payload.challengeId);
     setVerificationEmail(payload.verificationEmail);
     setVerificationExpiresInMinutes(payload.expiresInMinutes ?? null);
-    setVerificationCode("");
+    setVerificationCode(payload.verificationCode ?? "");
+    setVerificationDelivery(payload.verificationDelivery === "manual" ? "manual" : "email");
+    setVerificationNotice(payload.warning ?? null);
     setPhase("verify");
   }
 
@@ -179,7 +186,9 @@ export default function SignUpForm({
                 <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
                   {phase === "details"
                     ? "Create a secure hiring workspace for your team, choose a workspace ID, and set the shared admin access key your company will use to manage the workspace."
-                    : `We sent a 6-digit verification code to ${verificationEmail || contactEmail}. Enter it below${verificationExpiresInMinutes ? ` within ${verificationExpiresInMinutes} minutes` : ""} before we create the workspace.`}
+                    : verificationDelivery === "manual"
+                      ? `Email delivery is not configured for this deployment, so the 6-digit code is shown below for ${verificationEmail || contactEmail}.${verificationExpiresInMinutes ? ` It expires in ${verificationExpiresInMinutes} minutes.` : ""}`
+                      : `We sent a 6-digit verification code to ${verificationEmail || contactEmail}. Enter it below${verificationExpiresInMinutes ? ` within ${verificationExpiresInMinutes} minutes` : ""} before we create the workspace.`}
                 </p>
               </div>
             </div>
@@ -304,6 +313,11 @@ export default function SignUpForm({
                 </>
               ) : (
                 <div className="space-y-4">
+                  {verificationNotice ? (
+                    <div className="rounded-2xl border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-700 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
+                      {verificationNotice}
+                    </div>
+                  ) : null}
                   <label className="block space-y-2">
                     <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
                       Verification code
